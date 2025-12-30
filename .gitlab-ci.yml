@@ -142,6 +142,7 @@ build:container:
       --destination "${IMAGE_TAG}"
       --destination "${IMAGE_LATEST}"
       --cache=true
+      --cache-repo="${CI_REGISTRY_IMAGE}/cache"
       --cache-ttl=168h
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"

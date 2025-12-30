@@ -44,8 +44,18 @@ type Vulnerability struct {
 }
 
 type Location struct {
-	Image           string `json:"image"`
-	OperatingSystem string `json:"operating_system,omitempty"`
+	Image           string     `json:"image"`
+	OperatingSystem string     `json:"operating_system"`
+	Dependency      Dependency `json:"dependency"`
+}
+
+type Dependency struct {
+	Package Package `json:"package"`
+	Version string  `json:"version"`
+}
+
+type Package struct {
+	Name string `json:"name"`
 }
 
 type Ident struct {
@@ -60,18 +70,30 @@ type Link struct {
 }
 
 type ScanInfo struct {
-	Scanner Scanner `json:"scanner"`
-	Type    string  `json:"type"`
-	Status  string  `json:"status"`
-	StartAt string  `json:"start_time"`
-	EndAt   string  `json:"end_time"`
+	Analyzer Analyzer `json:"analyzer"`
+	Scanner  Scanner  `json:"scanner"`
+	Type     string   `json:"type"`
+	Status   string   `json:"status"`
+	StartAt  string   `json:"start_time"`
+	EndAt    string   `json:"end_time"`
+}
+
+type Analyzer struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	Vendor  Vendor `json:"vendor"`
 }
 
 type Scanner struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
 	Version string `json:"version"`
-	URL     string `json:"url"`
+	Vendor  Vendor `json:"vendor"`
+}
+
+type Vendor struct {
+	Name string `json:"name"`
 }
 
 type Config struct {
@@ -254,7 +276,8 @@ func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config) {
 
 func convertToGitLabReport(items []unstructured.Unstructured) SecurityReport {
 	var vulns []Vulnerability
-	now := time.Now().UTC().Format(time.RFC3339)
+	// GitLab expects format: 2024-01-02T15:04:05 (no timezone)
+	now := time.Now().UTC().Format("2006-01-02T15:04:05")
 
 	for _, item := range items {
 		report, _, _ := unstructured.NestedMap(item.Object, "report")
@@ -280,12 +303,25 @@ func convertToGitLabReport(items []unstructured.Unstructured) SecurityReport {
 			vulnID, _ := vuln["vulnerabilityID"].(string)
 			severity, _ := vuln["severity"].(string)
 			pkgName, _ := vuln["resource"].(string)
+			installedVer, _ := vuln["installedVersion"].(string)
 			title, _ := vuln["title"].(string)
 			primaryURL, _ := vuln["primaryLink"].(string)
 
 			desc := title
 			if d, ok := vuln["description"].(string); ok && d != "" {
 				desc = d
+			}
+
+			// Get OS info from report
+			os, _, _ := unstructured.NestedMap(report, "os")
+			osFamily, _ := os["family"].(string)
+			osName, _ := os["name"].(string)
+			osInfo := osFamily
+			if osName != "" {
+				osInfo = fmt.Sprintf("%s %s", osFamily, osName)
+			}
+			if osInfo == "" {
+				osInfo = "Unknown"
 			}
 
 			vulns = append(vulns, Vulnerability{
@@ -295,7 +331,14 @@ func convertToGitLabReport(items []unstructured.Unstructured) SecurityReport {
 				Message:     fmt.Sprintf("%s in %s (%s)", vulnID, pkgName, fullImage),
 				Description: firstN(desc, 500),
 				Severity:    mapSeverity(severity),
-				Location:    Location{Image: fullImage},
+				Location: Location{
+					Image:           fullImage,
+					OperatingSystem: osInfo,
+					Dependency: Dependency{
+						Package: Package{Name: pkgName},
+						Version: installedVer,
+					},
+				},
 				Identifiers: []Ident{{
 					Type:  "cve",
 					Name:  vulnID,
@@ -316,11 +359,17 @@ func convertToGitLabReport(items []unstructured.Unstructured) SecurityReport {
 		Version:         "15.0.0",
 		Vulnerabilities: vulns,
 		Scan: ScanInfo{
+			Analyzer: Analyzer{
+				ID:      "trivy-operator",
+				Name:    "Trivy Operator",
+				Version: "0.24.0",
+				Vendor:  Vendor{Name: "Aqua Security"},
+			},
 			Scanner: Scanner{
 				ID:      "trivy",
-				Name:    "Trivy Operator",
-				Version: "0.50.0",
-				URL:     "https://github.com/aquasecurity/trivy-operator",
+				Name:    "Trivy",
+				Version: "0.58.0",
+				Vendor:  Vendor{Name: "Aqua Security"},
 			},
 			Type:    "container_scanning",
 			Status:  "success",

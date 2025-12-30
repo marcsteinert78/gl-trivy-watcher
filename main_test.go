@@ -202,12 +202,23 @@ func TestConvertToGitLabReport(t *testing.T) {
 		t.Fatalf("Expected 2 vulnerabilities, got %d", len(report.Vulnerabilities))
 	}
 
+	// Check analyzer info
+	if report.Scan.Analyzer.ID != "trivy-operator" {
+		t.Errorf("Analyzer ID = %q, want %q", report.Scan.Analyzer.ID, "trivy-operator")
+	}
+	if report.Scan.Analyzer.Vendor.Name != "Aqua Security" {
+		t.Errorf("Analyzer Vendor = %q, want %q", report.Scan.Analyzer.Vendor.Name, "Aqua Security")
+	}
+
 	// Check scanner info
 	if report.Scan.Scanner.ID != "trivy" {
 		t.Errorf("Scanner ID = %q, want %q", report.Scan.Scanner.ID, "trivy")
 	}
-	if report.Scan.Scanner.Name != "Trivy Operator" {
-		t.Errorf("Scanner Name = %q, want %q", report.Scan.Scanner.Name, "Trivy Operator")
+	if report.Scan.Scanner.Name != "Trivy" {
+		t.Errorf("Scanner Name = %q, want %q", report.Scan.Scanner.Name, "Trivy")
+	}
+	if report.Scan.Scanner.Vendor.Name != "Aqua Security" {
+		t.Errorf("Scanner Vendor = %q, want %q", report.Scan.Scanner.Vendor.Name, "Aqua Security")
 	}
 	if report.Scan.Type != "container_scanning" {
 		t.Errorf("Scan Type = %q, want %q", report.Scan.Type, "container_scanning")
@@ -589,6 +600,10 @@ func TestSecurityReportJSON(t *testing.T) {
 				Location: Location{
 					Image:           "nginx:1.21",
 					OperatingSystem: "debian",
+					Dependency: Dependency{
+						Package: Package{Name: "libssl"},
+						Version: "1.1.1",
+					},
 				},
 				Identifiers: []Ident{
 					{
@@ -604,16 +619,22 @@ func TestSecurityReportJSON(t *testing.T) {
 			},
 		},
 		Scan: ScanInfo{
+			Analyzer: Analyzer{
+				ID:      "trivy-operator",
+				Name:    "Trivy Operator",
+				Version: "0.24.0",
+				Vendor:  Vendor{Name: "Aqua Security"},
+			},
 			Scanner: Scanner{
 				ID:      "trivy",
-				Name:    "Trivy Operator",
-				Version: "0.50.0",
-				URL:     "https://github.com/aquasecurity/trivy-operator",
+				Name:    "Trivy",
+				Version: "0.58.0",
+				Vendor:  Vendor{Name: "Aqua Security"},
 			},
 			Type:    "container_scanning",
 			Status:  "success",
-			StartAt: "2024-01-01T00:00:00Z",
-			EndAt:   "2024-01-01T00:01:00Z",
+			StartAt: "2024-01-01T00:00:00",
+			EndAt:   "2024-01-01T00:01:00",
 		},
 	}
 

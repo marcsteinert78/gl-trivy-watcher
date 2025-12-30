@@ -341,14 +341,11 @@ func uploadToPackageRegistry(cfg Config, report []byte) (string, error) {
 		return "", fmt.Errorf("gzip close: %w", err)
 	}
 
-	timestamp := time.Now().Unix()
-	filename := fmt.Sprintf("trivy-report-%d.json.gz", timestamp)
+	// Use fixed filename - CI job knows where to download
+	filename := "trivy-report-latest.json.gz"
 
 	uploadURL := fmt.Sprintf("%s/projects/%s/packages/generic/trivy-reports/1.0.0/%s",
 		cfg.GitLabAPIURL, url.PathEscape(cfg.GitLabProjectID), filename)
-
-	fmt.Printf("DEBUG: Upload URL: %s\n", uploadURL)
-	fmt.Printf("DEBUG: User: %s, Token length: %d, Token prefix: %s\n", cfg.DeployTokenUser, len(cfg.DeployToken), cfg.DeployToken[:10])
 
 	req, err := http.NewRequest("PUT", uploadURL, &buf)
 	if err != nil {
@@ -364,9 +361,8 @@ func uploadToPackageRegistry(cfg Config, report []byte) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
-	fmt.Printf("DEBUG: Response status: %d, body: %s\n", resp.StatusCode, string(body))
 	if resp.StatusCode != 201 && resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("upload failed: %d - %s", resp.StatusCode, string(body))
 	}
 
@@ -382,11 +378,10 @@ func triggerPipeline(cfg Config, reportURL string) (int, error) {
 		cfg.GitLabAPIURL, url.PathEscape(cfg.GitLabProjectID))
 
 	// Use Pipeline Trigger Token (minimal permissions: can only trigger pipelines)
+	// No variables - CI job uses fixed URL to download report
 	data := url.Values{
-		"token":                       {cfg.TriggerToken},
-		"ref":                         {cfg.GitLabRef},
-		"variables[TRIVY_REPORT_URL]": {reportURL},
-		"variables[TRIGGER_JOB]":      {"trivy:cluster-scan"},
+		"token": {cfg.TriggerToken},
+		"ref":   {cfg.GitLabRef},
 	}
 
 	resp, err := http.PostForm(triggerURL, data)

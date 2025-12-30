@@ -173,10 +173,10 @@ func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config) {
 				continue
 			}
 
-			// Generate report and hash
+			// Generate report and hash (hash only vulns, not timestamps)
 			secReport := convertToGitLabReport(reports.Items)
-			reportJSON, _ := json.Marshal(secReport)
-			hash := fmt.Sprintf("%x", sha256.Sum256(reportJSON))[:16]
+			vulnsJSON, _ := json.Marshal(secReport.Vulnerabilities)
+			hash := fmt.Sprintf("%x", sha256.Sum256(vulnsJSON))[:16]
 
 			now := time.Now()
 

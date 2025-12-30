@@ -2,6 +2,7 @@ stages:
   - test
   - security
   - build
+  - dependencies
 
 variables:
   IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
@@ -64,18 +65,21 @@ include:
   - template: Security/Dependency-Scanning.gitlab-ci.yml
   - template: Security/Secret-Detection.gitlab-ci.yml
 
-# Override SAST to use correct tags
+# Override SAST to use correct tags and stage
 semgrep-sast:
+  stage: security
   tags:
     - pve-local
 
 # Override dependency scanning
 gemnasium-dependency_scanning:
+  stage: security
   tags:
     - pve-local
 
 # Override secret detection
 secret_detection:
+  stage: security
   tags:
     - pve-local
 
@@ -124,3 +128,27 @@ build:container:
   needs:
     - job: test:unit
     - job: test:build
+
+# ============================================================================
+# Dependencies Stage (Scheduled)
+# ============================================================================
+
+renovate:
+  stage: dependencies
+  image:
+    name: renovate/renovate:latest
+    entrypoint: [""]
+  tags:
+    - pve-local
+  variables:
+    RENOVATE_REPOSITORIES: '["msteinert1/homeserver/tools/trivy-watcher"]'
+    RENOVATE_ENDPOINT: "${CI_API_V4_URL}"
+    RENOVATE_PLATFORM: "gitlab"
+    RENOVATE_GIT_AUTHOR: "Renovate Bot <bot@renovateapp.com>"
+    RENOVATE_AUTODISCOVER: "false"
+    RENOVATE_BASE_BRANCHES: "main"
+    LOG_LEVEL: "info"
+  script:
+    - renovate --platform=gitlab --token="${GITLAB_TOKEN}" --endpoint="${CI_API_V4_URL}"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"

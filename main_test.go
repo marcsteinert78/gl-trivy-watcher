@@ -105,6 +105,34 @@ func TestFirstN(t *testing.T) {
 	}
 }
 
+func TestIsValidURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{"https url", "https://example.com", true},
+		{"http url", "http://example.com", true},
+		{"https with path", "https://nvd.nist.gov/vuln/detail/CVE-2021-1234", true},
+		{"empty string", "", false},
+		{"no protocol", "example.com", false},
+		{"ftp protocol", "ftp://example.com", false},
+		{"just https", "https://", true}, // technically matches pattern
+		{"spaces", "https:// example.com", true}, // matches prefix
+		{"relative path", "/path/to/resource", false},
+		{"mailto", "mailto:test@example.com", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := isValidURL(tc.input)
+			if result != tc.expected {
+				t.Errorf("isValidURL(%q) = %v, want %v", tc.input, result, tc.expected)
+			}
+		})
+	}
+}
+
 func TestGetEnvOrDefault(t *testing.T) {
 	// Test with existing env var
 	t.Setenv("TEST_ENV_VAR", "test_value")

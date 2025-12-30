@@ -324,6 +324,22 @@ func convertToGitLabReport(items []unstructured.Unstructured) SecurityReport {
 				osInfo = "Unknown"
 			}
 
+			// Build links only if URL is valid
+			var links []Link
+			if isValidURL(primaryURL) {
+				links = []Link{{URL: primaryURL}}
+			}
+
+			// Build identifier
+			ident := Ident{
+				Type:  "cve",
+				Name:  vulnID,
+				Value: vulnID,
+			}
+			if isValidURL(primaryURL) {
+				ident.URL = primaryURL
+			}
+
 			vulns = append(vulns, Vulnerability{
 				ID:          fmt.Sprintf("%s-%s-%s", vulnID, sanitize(image), pkgName),
 				Category:    "container_scanning",
@@ -339,13 +355,8 @@ func convertToGitLabReport(items []unstructured.Unstructured) SecurityReport {
 						Version: installedVer,
 					},
 				},
-				Identifiers: []Ident{{
-					Type:  "cve",
-					Name:  vulnID,
-					Value: vulnID,
-					URL:   primaryURL,
-				}},
-				Links: []Link{{URL: primaryURL}},
+				Identifiers: []Ident{ident},
+				Links:       links,
 			})
 		}
 	}
@@ -444,6 +455,10 @@ func triggerPipeline(cfg Config, reportURL string) (int, error) {
 		return resp.StatusCode, fmt.Errorf("trigger failed: %d - %s", resp.StatusCode, string(body))
 	}
 	return resp.StatusCode, nil
+}
+
+func isValidURL(s string) bool {
+	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
 }
 
 func mapSeverity(s string) string {

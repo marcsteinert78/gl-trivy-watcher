@@ -139,10 +139,13 @@ func main() {
 		cancel()
 	}()
 
-	fmt.Println("=== Trivy GitLab Reporter ===")
-	fmt.Printf("Project: %s, Ref: %s\n", cfg.GitLabProjectID, cfg.GitLabRef)
-	fmt.Printf("Poll: %s, Stabilize: %s, MinGap: %s\n",
-		cfg.PollInterval, cfg.StabilizeTime, cfg.MinTriggerGap)
+	fmt.Println("=== Trivy Vulnerability Watcher ===")
+	fmt.Printf("GitLab Project: %s\n", cfg.GitLabProjectID)
+	fmt.Printf("Poll Interval: %s\n", cfg.PollInterval)
+	fmt.Printf("Stabilization Time: %s\n", cfg.StabilizeTime)
+	fmt.Printf("Min Change Interval: %s\n", cfg.MinTriggerGap)
+	fmt.Printf("GitLab Ref: %s\n", cfg.GitLabRef)
+	fmt.Println()
 
 	runWatcher(ctx, client, cfg)
 }
@@ -159,6 +162,8 @@ func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config) {
 		Resource: "vulnerabilityreports",
 	}
 
+	fmt.Println("Starting metrics monitoring...")
+
 	ticker := time.NewTicker(cfg.PollInterval)
 	defer ticker.Stop()
 
@@ -169,7 +174,7 @@ func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config) {
 		case <-ticker.C:
 			reports, err := client.Resource(vulnGVR).List(ctx, metav1.ListOptions{})
 			if err != nil {
-				fmt.Printf("ERROR: Failed to list reports: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Error fetching reports: %v\n", err)
 				continue
 			}
 
@@ -182,7 +187,7 @@ func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config) {
 
 			// First run
 			if lastHash == "" {
-				fmt.Printf("Initial hash: %s (%d vulns)\n", hash, len(secReport.Vulnerabilities))
+				fmt.Printf("Initial metrics hash: %s...\n", hash)
 				lastHash = hash
 				stableSince = now
 				continue
@@ -190,7 +195,8 @@ func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config) {
 
 			// Hash changed
 			if hash != lastHash {
-				fmt.Printf("Changed: %s -> %s\n", lastHash, hash)
+				fmt.Printf("Metrics changed: %s... → %s...\n", lastHash, hash)
+				fmt.Println("  Waiting for scans to stabilize...")
 				lastHash = hash
 				stableSince = now
 				continue
@@ -198,36 +204,48 @@ func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config) {
 
 			// Check stabilization
 			stableFor := now.Sub(stableSince)
+			stableSec := int(stableFor.Seconds())
+			stabilizeSec := int(cfg.StabilizeTime.Seconds())
+
 			if stableFor < cfg.StabilizeTime {
+				remaining := stabilizeSec - stableSec
+				fmt.Printf("Metrics stable for %ds, waiting %ds more...\n", stableSec, remaining)
 				continue
 			}
 
 			// Already triggered this hash
 			if hash == lastTriggeredHash {
+				fmt.Printf("Metrics stable for %ds, but already triggered for this hash. Waiting for changes...\n", stableSec)
 				continue
 			}
 
 			// Min gap between triggers
-			if now.Sub(lastTriggerTime) < cfg.MinTriggerGap {
+			timeSinceTrigger := now.Sub(lastTriggerTime)
+			if lastTriggerTime.Unix() > 0 && timeSinceTrigger < cfg.MinTriggerGap {
+				remaining := int((cfg.MinTriggerGap - timeSinceTrigger).Seconds())
+				fmt.Printf("Metrics stable, but triggered %ds ago. Waiting %ds more...\n",
+					int(timeSinceTrigger.Seconds()), remaining)
 				continue
 			}
 
 			// Trigger!
-			fmt.Printf("Stable for %s - uploading report (%d vulns)...\n",
-				stableFor.Round(time.Second), len(secReport.Vulnerabilities))
+			fmt.Printf("Metrics stable for %ds - triggering pipeline...\n", stableSec)
 
+			reportJSON, _ := json.Marshal(secReport)
 			reportURL, err := uploadToPackageRegistry(cfg, reportJSON)
 			if err != nil {
-				fmt.Printf("ERROR: Upload failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Error uploading report: %v\n", err)
 				continue
 			}
 
-			if err := triggerPipeline(cfg, reportURL); err != nil {
-				fmt.Printf("ERROR: Trigger failed: %v\n", err)
+			status, err := triggerPipeline(cfg, reportURL)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error triggering pipeline: %v\n", err)
 				continue
 			}
 
-			fmt.Println("Pipeline triggered successfully")
+			fmt.Printf("✓ Pipeline triggered successfully at %s\n", time.Now().UTC().Format(time.RFC3339))
+			fmt.Printf("  Response: %d\n", status)
 			lastTriggeredHash = hash
 			lastTriggerTime = now
 		}
@@ -355,29 +373,29 @@ func uploadToPackageRegistry(cfg Config, report []byte) (string, error) {
 	return downloadURL, nil
 }
 
-func triggerPipeline(cfg Config, reportURL string) error {
+func triggerPipeline(cfg Config, reportURL string) (int, error) {
 	triggerURL := fmt.Sprintf("%s/projects/%s/trigger/pipeline",
 		cfg.GitLabAPIURL, url.PathEscape(cfg.GitLabProjectID))
 
 	// Use Pipeline Trigger Token (minimal permissions: can only trigger pipelines)
 	data := url.Values{
-		"token":                        {cfg.TriggerToken},
-		"ref":                          {cfg.GitLabRef},
-		"variables[TRIVY_REPORT_URL]":  {reportURL},
-		"variables[TRIGGER_JOB]":       {"trivy:cluster-scan"},
+		"token":                       {cfg.TriggerToken},
+		"ref":                         {cfg.GitLabRef},
+		"variables[TRIVY_REPORT_URL]": {reportURL},
+		"variables[TRIGGER_JOB]":      {"trivy:cluster-scan"},
 	}
 
 	resp, err := http.PostForm(triggerURL, data)
 	if err != nil {
-		return fmt.Errorf("trigger: %w", err)
+		return 0, fmt.Errorf("trigger: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 201 && resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("trigger failed: %d - %s", resp.StatusCode, string(body))
+		return resp.StatusCode, fmt.Errorf("trigger failed: %d - %s", resp.StatusCode, string(body))
 	}
-	return nil
+	return resp.StatusCode, nil
 }
 
 func mapSeverity(s string) string {

@@ -6,12 +6,11 @@ WORKDIR /app
 # Install ca-certificates for HTTPS
 RUN apk add --no-cache ca-certificates git
 
-# Copy go mod files
-COPY go.mod go.sum* ./
-RUN go mod download
+# Copy all source files
+COPY go.mod *.go ./
 
-# Copy source
-COPY *.go ./
+# Download and verify dependencies
+RUN go mod tidy && go mod download
 
 # Build static binary
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /trivy-watcher .

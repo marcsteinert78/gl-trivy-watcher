@@ -348,7 +348,7 @@ func uploadToPackageRegistry(cfg Config, report []byte) (string, error) {
 		cfg.GitLabAPIURL, url.PathEscape(cfg.GitLabProjectID), filename)
 
 	fmt.Printf("DEBUG: Upload URL: %s\n", uploadURL)
-	fmt.Printf("DEBUG: User: %s, Token length: %d\n", cfg.DeployTokenUser, len(cfg.DeployToken))
+	fmt.Printf("DEBUG: User: %s, Token length: %d, Token prefix: %s\n", cfg.DeployTokenUser, len(cfg.DeployToken), cfg.DeployToken[:10])
 
 	req, err := http.NewRequest("PUT", uploadURL, &buf)
 	if err != nil {
@@ -364,8 +364,9 @@ func uploadToPackageRegistry(cfg Config, report []byte) (string, error) {
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
+	fmt.Printf("DEBUG: Response status: %d, body: %s\n", resp.StatusCode, string(body))
 	if resp.StatusCode != 201 && resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("upload failed: %d - %s", resp.StatusCode, string(body))
 	}
 

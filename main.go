@@ -347,6 +347,9 @@ func uploadToPackageRegistry(cfg Config, report []byte) (string, error) {
 	uploadURL := fmt.Sprintf("%s/projects/%s/packages/generic/trivy-reports/1.0.0/%s",
 		cfg.GitLabAPIURL, url.PathEscape(cfg.GitLabProjectID), filename)
 
+	fmt.Printf("DEBUG: Upload URL: %s\n", uploadURL)
+	fmt.Printf("DEBUG: User: %s, Token length: %d\n", cfg.DeployTokenUser, len(cfg.DeployToken))
+
 	req, err := http.NewRequest("PUT", uploadURL, &buf)
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)

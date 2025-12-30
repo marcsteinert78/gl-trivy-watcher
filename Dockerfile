@@ -4,13 +4,16 @@ FROM golang:1.23-alpine AS builder
 WORKDIR /app
 
 # Install ca-certificates for HTTPS
-RUN apk add --no-cache ca-certificates git
+RUN apk add --no-cache ca-certificates
 
-# Copy all source files
-COPY go.mod *.go ./
+# Copy dependency files first (better layer caching)
+COPY go.mod go.sum ./
 
-# Download and verify dependencies
-RUN go mod tidy && go mod download
+# Download dependencies (cached if go.mod/go.sum unchanged)
+RUN go mod download && go mod verify
+
+# Copy source files
+COPY *.go ./
 
 # Build static binary
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /trivy-watcher .

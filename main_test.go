@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"testing"
 	"time"
 
@@ -108,8 +107,7 @@ func TestFirstN(t *testing.T) {
 
 func TestGetEnvOrDefault(t *testing.T) {
 	// Test with existing env var
-	os.Setenv("TEST_ENV_VAR", "test_value")
-	defer os.Unsetenv("TEST_ENV_VAR")
+	t.Setenv("TEST_ENV_VAR", "test_value")
 
 	result := getEnvOrDefault("TEST_ENV_VAR", "default")
 	if result != "test_value" {
@@ -123,8 +121,7 @@ func TestGetEnvOrDefault(t *testing.T) {
 	}
 
 	// Test with empty env var
-	os.Setenv("EMPTY_VAR", "")
-	defer os.Unsetenv("EMPTY_VAR")
+	t.Setenv("EMPTY_VAR", "")
 	result = getEnvOrDefault("EMPTY_VAR", "default")
 	if result != "default" {
 		t.Errorf("Expected 'default' for empty var, got %q", result)
@@ -133,8 +130,7 @@ func TestGetEnvOrDefault(t *testing.T) {
 
 func TestGetDurationEnv(t *testing.T) {
 	// Test with valid duration
-	os.Setenv("TEST_DURATION", "30s")
-	defer os.Unsetenv("TEST_DURATION")
+	t.Setenv("TEST_DURATION", "30s")
 
 	result := getDurationEnv("TEST_DURATION", time.Minute)
 	if result != 30*time.Second {
@@ -142,8 +138,7 @@ func TestGetDurationEnv(t *testing.T) {
 	}
 
 	// Test with invalid duration
-	os.Setenv("INVALID_DURATION", "not-a-duration")
-	defer os.Unsetenv("INVALID_DURATION")
+	t.Setenv("INVALID_DURATION", "not-a-duration")
 
 	result = getDurationEnv("INVALID_DURATION", time.Minute)
 	if result != time.Minute {
@@ -561,7 +556,7 @@ func TestGzipCompression(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create gzip reader: %v", err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	decompressed, err := io.ReadAll(reader)
 	if err != nil {

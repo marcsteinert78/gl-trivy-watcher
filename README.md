@@ -28,12 +28,25 @@ Trivy Operator -> VulnerabilityReport CRs -> Trivy Watcher -> GitLab Package Reg
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `GITLAB_PROJECT_ID` | required | Target project ID (numeric or path) |
-| `GITLAB_TOKEN` | required | Token with `api` scope |
+| `DEPLOY_TOKEN` | required | Deploy Token (scope: `write_package_registry`) |
+| `DEPLOY_TOKEN_USER` | required | Deploy Token username (e.g., `gitlab+deploy-token-123`) |
+| `TRIGGER_TOKEN` | required | Pipeline Trigger Token |
 | `GITLAB_REF` | `main` | Branch to trigger pipeline on |
 | `GITLAB_API_URL` | `https://gitlab.com/api/v4` | GitLab API URL |
 | `POLL_INTERVAL` | `10s` | How often to check for changes |
 | `STABILIZE_TIME` | `60s` | Wait time after last change |
 | `MIN_TRIGGER_GAP` | `5m` | Minimum time between triggers |
+
+## Token Setup (Minimal Permissions)
+
+1. **Deploy Token** (Settings → Repository → Deploy tokens)
+   - Name: `trivy-watcher`
+   - Scopes: `write_package_registry` only
+   - Note the username (e.g., `gitlab+deploy-token-12345`)
+
+2. **Pipeline Trigger Token** (Settings → CI/CD → Pipeline trigger tokens)
+   - Description: `trivy-watcher`
+   - Can only trigger pipelines, no other permissions
 
 ## Deployment
 

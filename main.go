@@ -75,28 +75,42 @@ type Scanner struct {
 }
 
 type Config struct {
-	GitLabProjectID string
-	GitLabToken     string
-	GitLabRef       string
-	GitLabAPIURL    string
-	PollInterval    time.Duration
-	StabilizeTime   time.Duration
-	MinTriggerGap   time.Duration
+	GitLabProjectID  string
+	GitLabRef        string
+	GitLabAPIURL     string
+	// Separate tokens for minimal permissions
+	DeployToken      string // write_package_registry scope only
+	DeployTokenUser  string // Deploy token username
+	TriggerToken     string // Pipeline trigger token (can only trigger)
+	PollInterval     time.Duration
+	StabilizeTime    time.Duration
+	MinTriggerGap    time.Duration
 }
 
 func main() {
 	cfg := Config{
 		GitLabProjectID: os.Getenv("GITLAB_PROJECT_ID"),
-		GitLabToken:     os.Getenv("GITLAB_TOKEN"),
 		GitLabRef:       getEnvOrDefault("GITLAB_REF", "main"),
 		GitLabAPIURL:    getEnvOrDefault("GITLAB_API_URL", "https://gitlab.com/api/v4"),
+		// Minimal permission tokens
+		DeployToken:     os.Getenv("DEPLOY_TOKEN"),      // write_package_registry only
+		DeployTokenUser: os.Getenv("DEPLOY_TOKEN_USER"), // e.g., "gitlab+deploy-token-123"
+		TriggerToken:    os.Getenv("TRIGGER_TOKEN"),     // pipeline trigger only
 		PollInterval:    getDurationEnv("POLL_INTERVAL", 10*time.Second),
 		StabilizeTime:   getDurationEnv("STABILIZE_TIME", 60*time.Second),
 		MinTriggerGap:   getDurationEnv("MIN_TRIGGER_GAP", 5*time.Minute),
 	}
 
-	if cfg.GitLabProjectID == "" || cfg.GitLabToken == "" {
-		fmt.Println("ERROR: GITLAB_PROJECT_ID and GITLAB_TOKEN required")
+	if cfg.GitLabProjectID == "" {
+		fmt.Println("ERROR: GITLAB_PROJECT_ID required")
+		os.Exit(1)
+	}
+	if cfg.DeployToken == "" || cfg.DeployTokenUser == "" {
+		fmt.Println("ERROR: DEPLOY_TOKEN and DEPLOY_TOKEN_USER required")
+		os.Exit(1)
+	}
+	if cfg.TriggerToken == "" {
+		fmt.Println("ERROR: TRIGGER_TOKEN required")
 		os.Exit(1)
 	}
 
@@ -319,7 +333,8 @@ func uploadToPackageRegistry(cfg Config, report []byte) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
 	}
-	req.Header.Set("PRIVATE-TOKEN", cfg.GitLabToken)
+	// Use Deploy Token with Basic Auth (minimal permissions: write_package_registry)
+	req.SetBasicAuth(cfg.DeployTokenUser, cfg.DeployToken)
 	req.Header.Set("Content-Type", "application/gzip")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -344,8 +359,9 @@ func triggerPipeline(cfg Config, reportURL string) error {
 	triggerURL := fmt.Sprintf("%s/projects/%s/trigger/pipeline",
 		cfg.GitLabAPIURL, url.PathEscape(cfg.GitLabProjectID))
 
+	// Use Pipeline Trigger Token (minimal permissions: can only trigger pipelines)
 	data := url.Values{
-		"token":                        {cfg.GitLabToken},
+		"token":                        {cfg.TriggerToken},
 		"ref":                          {cfg.GitLabRef},
 		"variables[TRIVY_REPORT_URL]":  {reportURL},
 		"variables[TRIGGER_JOB]":       {"trivy:cluster-scan"},

@@ -20,12 +20,6 @@
   },
   "packageRules": [
     {
-      "description": "Ignore Go version in go.mod (Renovate has issues with Go versioning)",
-      "matchManagers": ["gomod"],
-      "matchDepTypes": ["golang"],
-      "enabled": false
-    },
-    {
       "description": "Auto-merge patch updates after 3 days",
       "matchUpdateTypes": ["patch"],
       "minimumReleaseAge": "3 days",

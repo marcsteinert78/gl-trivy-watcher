@@ -2,6 +2,7 @@ stages:
   - test
   - security
   - build
+  - container-security
   - dependencies
 
 variables:
@@ -70,6 +71,7 @@ include:
   - template: Security/SAST.gitlab-ci.yml
   - template: Security/Dependency-Scanning.gitlab-ci.yml
   - template: Security/Secret-Detection.gitlab-ci.yml
+  - template: Security/Container-Scanning.gitlab-ci.yml
 
 # Override SAST to use correct tags and stage
 semgrep-sast:
@@ -154,6 +156,20 @@ build:container:
   needs:
     - job: test:unit
     - job: test:build
+
+# ============================================================================
+# Container Security Stage
+# ============================================================================
+
+container_scanning:
+  stage: container-security
+  tags:
+    - pve-local
+  variables:
+    CS_IMAGE: $IMAGE_LATEST
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 # ============================================================================
 # Dependencies Stage (Scheduled)

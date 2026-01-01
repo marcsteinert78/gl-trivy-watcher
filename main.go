@@ -44,9 +44,17 @@ type Vulnerability struct {
 }
 
 type Location struct {
-	Image           string     `json:"image"`
-	OperatingSystem string     `json:"operating_system"`
-	Dependency      Dependency `json:"dependency"`
+	Image              string             `json:"image"`
+	OperatingSystem    string             `json:"operating_system"`
+	Dependency         Dependency         `json:"dependency"`
+	KubernetesResource KubernetesResource `json:"kubernetes_resource"`
+}
+
+type KubernetesResource struct {
+	Namespace     string `json:"namespace"`
+	Kind          string `json:"kind"`
+	Name          string `json:"name"`
+	ContainerName string `json:"container_name"`
 }
 
 type Dependency struct {
@@ -285,6 +293,22 @@ func convertToGitLabReport(items []unstructured.Unstructured) SecurityReport {
 			continue
 		}
 
+		// Get metadata for kubernetes_resource
+		metadata, _, _ := unstructured.NestedMap(item.Object, "metadata")
+		namespace, _ := metadata["namespace"].(string)
+		resourceName, _ := metadata["name"].(string)
+		if namespace == "" {
+			namespace = "unknown"
+		}
+		if resourceName == "" {
+			resourceName = "unknown"
+		}
+		labels, _, _ := unstructured.NestedStringMap(item.Object, "metadata", "labels")
+		containerName := labels["trivy-operator.container.name"]
+		if containerName == "" {
+			containerName = "main"
+		}
+
 		artifact, _, _ := unstructured.NestedMap(report, "artifact")
 		image, _ := artifact["repository"].(string)
 		tag, _ := artifact["tag"].(string)
@@ -353,6 +377,12 @@ func convertToGitLabReport(items []unstructured.Unstructured) SecurityReport {
 					Dependency: Dependency{
 						Package: Package{Name: pkgName},
 						Version: installedVer,
+					},
+					KubernetesResource: KubernetesResource{
+						Namespace:     namespace,
+						Kind:          "Pod",
+						Name:          resourceName,
+						ContainerName: containerName,
 					},
 				},
 				Identifiers: []Ident{ident},

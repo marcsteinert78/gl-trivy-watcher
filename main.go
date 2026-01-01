@@ -342,7 +342,7 @@ func convertToGitLabReport(items []unstructured.Unstructured) SecurityReport {
 
 			vulns = append(vulns, Vulnerability{
 				ID:          fmt.Sprintf("%s-%s-%s", vulnID, sanitize(image), pkgName),
-				Category:    "container_scanning",
+				Category:    "cluster_image_scanning",
 				Name:        vulnID,
 				Message:     fmt.Sprintf("%s in %s (%s)", vulnID, pkgName, fullImage),
 				Description: firstN(desc, 500),
@@ -382,7 +382,7 @@ func convertToGitLabReport(items []unstructured.Unstructured) SecurityReport {
 				Version: "0.58.0",
 				Vendor:  Vendor{Name: "Aqua Security"},
 			},
-			Type:    "container_scanning",
+			Type:    "cluster_image_scanning",
 			Status:  "success",
 			StartAt: now,
 			EndAt:   now,

@@ -167,7 +167,8 @@ renovate:
   tags:
     - pve-local
   variables:
-    RENOVATE_REPOSITORIES: '["msteinert1/homeserver/tools/trivy-watcher"]'
+    # Use CI_PROJECT_PATH for portability between GitLab instances
+    RENOVATE_REPOSITORIES: '["${CI_PROJECT_PATH}"]'
     RENOVATE_ENDPOINT: "${CI_API_V4_URL}"
     RENOVATE_PLATFORM: "gitlab"
     RENOVATE_GIT_AUTHOR: "Renovate Bot <bot@renovateapp.com>"

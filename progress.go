@@ -66,31 +66,38 @@ func (p *ProgressDisplay) run() {
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
 
-	frame := 0
+	// Print immediately on start
+	p.printProgress(0)
+
+	frame := 1
 	for {
 		select {
 		case <-p.stopCh:
 			return
 		case <-ticker.C:
-			remaining := time.Until(p.endTime)
-			if remaining < 0 {
-				remaining = 0
-			}
-
-			spinner := spinnerFrames[frame%len(spinnerFrames)]
+			p.printProgress(frame)
 			frame++
-
-			// Format remaining time
-			var timeStr string
-			if remaining >= time.Minute {
-				timeStr = fmt.Sprintf("%dm%02ds", int(remaining.Minutes()), int(remaining.Seconds())%60)
-			} else {
-				timeStr = fmt.Sprintf("%ds", int(remaining.Seconds()))
-			}
-
-			// Print on new line (works with kubectl logs)
-			fmt.Printf("[%s] %s %s... %s remaining\n",
-				time.Now().Format("15:04:05"), spinner, p.message, timeStr)
 		}
 	}
+}
+
+// printProgress prints the current progress state.
+func (p *ProgressDisplay) printProgress(frame int) {
+	remaining := time.Until(p.endTime)
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	spinner := spinnerFrames[frame%len(spinnerFrames)]
+
+	// Format remaining time
+	var timeStr string
+	if remaining >= time.Minute {
+		timeStr = fmt.Sprintf("%dm%02ds", int(remaining.Minutes()), int(remaining.Seconds())%60)
+	} else {
+		timeStr = fmt.Sprintf("%ds", int(remaining.Seconds()))
+	}
+
+	fmt.Printf("[%s] %s %s... %s remaining\n",
+		time.Now().Format("15:04:05"), spinner, p.message, timeStr)
 }

@@ -221,8 +221,9 @@ func performNamespaceUploads(
 		// Check if hash changed since last upload
 		state := tracker.GetState(m.namespace)
 		if state.LastTriggerHash == m.hash {
+			fmt.Printf("  ○ %s: %d vulnerabilities (unchanged, skipped)\n", m.namespace, len(m.vulns))
 			skippedCount++
-			continue // No change, skip upload
+			continue
 		}
 
 		report := buildSecurityReport(m.vulns)
@@ -253,6 +254,8 @@ func performNamespaceUploads(
 				uploadCount++
 			}
 		} else {
+			fmt.Printf("  ○ consolidated (%d namespaces): %d vulnerabilities (unchanged, skipped)\n",
+				len(unmatchedNames), len(unmatchedVulns))
 			skippedCount++
 		}
 	}

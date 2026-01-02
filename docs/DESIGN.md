@@ -219,15 +219,21 @@ PUT /projects/{project}/packages/generic/trivy-reports/1.0.0/trivy-report-latest
 
 ### Step 2: Pipeline Trigger
 
-After upload, the watcher triggers a pipeline in the target project:
+After upload, the watcher triggers a pipeline in the target project via the GitLab API:
 
 ```
-POST /projects/{project}/trigger/pipeline
-  token={TRIGGER_TOKEN}
-  ref=main
+POST /projects/{project}/pipeline
+  Header: PRIVATE-TOKEN: {GITLAB_ACCESS_TOKEN}
+  Body: {"ref":"main","variables":[{"key":"TRIVY_TRIGGERED","value":"true"}]}
 ```
 
-The triggered pipeline runs the `trivy:cluster-scan` job.
+**Key Design Decision**: We use the `/pipeline` API with a custom variable `TRIVY_TRIGGERED=true` instead of the `/trigger/pipeline` endpoint. This is because:
+
+1. `/trigger/pipeline` requires project-specific trigger tokens (won't work for multi-project)
+2. `/pipeline` API sets `CI_PIPELINE_SOURCE=api` (not `trigger`)
+3. Using a custom variable is more explicit and self-documenting
+
+The triggered pipeline runs the `trivy:cluster-scan` job only when `TRIVY_TRIGGERED=true`.
 
 ### Step 3: CI Job Configuration
 
@@ -255,7 +261,17 @@ trivy:cluster-scan:
       - gl-container-scanning-report.json
     expire_in: 30 days
   rules:
-    - if: $CI_PIPELINE_SOURCE == "trigger"
+    # Only run when triggered by trivy-watcher (passes TRIVY_TRIGGERED=true)
+    - if: $TRIVY_TRIGGERED == "true"
+```
+
+**Important**: The workflow rules must also allow pipelines with `TRIVY_TRIGGERED`:
+
+```yaml
+workflow:
+  rules:
+    # ... other rules ...
+    - if: $TRIVY_TRIGGERED == "true"
 ```
 
 ### Key Configuration Points
@@ -264,7 +280,7 @@ trivy:cluster-scan:
 |---------|-------|-----|
 | `artifacts.reports.cluster_image_scanning` | `gl-container-scanning-report.json` | **Critical**: This artifact type routes to Operational tab |
 | `$CI_JOB_TOKEN` | Auto-provided | Allows downloading from same project's Package Registry |
-| `rules: trigger` | Only on trigger | Prevents running on normal pushes |
+| `$TRIVY_TRIGGERED == "true"` | Only on trivy-watcher triggers | More explicit than checking `CI_PIPELINE_SOURCE` |
 
 ### Why Operational (not Development)?
 

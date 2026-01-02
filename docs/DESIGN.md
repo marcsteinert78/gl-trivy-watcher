@@ -359,10 +359,11 @@ GITLAB_ACCESS_TOKEN=glpat-xxx  # Group Access Token with api scope
    - Consider NetworkPolicy to restrict other egress
    - If self-hosted GitLab: internal network only
 
-5. **Namespace Isolation**
-   - Each namespace's vulns only visible in their project
-   - Teams cannot see other teams' vulnerabilities
-   - Consolidated report (default project) may contain cross-team data
+5. **Namespace Isolation (Limited)**
+   - Each namespace's vulns uploaded to their project
+   - **Note**: Group-level dashboards aggregate vulnerabilities from ALL projects
+   - For true isolation, use separate GitLab groups per team
+   - Consolidated report (default project) contains all unmatched namespaces
 
 ### Future Enhancements
 

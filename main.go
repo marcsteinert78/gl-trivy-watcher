@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -24,7 +25,10 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-// GitLab Security Report format
+// ============================================================================
+// GitLab Security Report Types
+// ============================================================================
+
 type SecurityReport struct {
 	Version         string          `json:"version"`
 	Vulnerabilities []Vulnerability `json:"vulnerabilities"`
@@ -104,47 +108,250 @@ type Vendor struct {
 	Name string `json:"name"`
 }
 
+// ============================================================================
+// Configuration
+// ============================================================================
+
 type Config struct {
-	GitLabProjectID  string
-	GitLabRef        string
-	GitLabAPIURL     string
-	// Separate tokens for minimal permissions
-	DeployToken      string // write_package_registry scope only
-	DeployTokenUser  string // Deploy token username
-	TriggerToken     string // Pipeline trigger token (can only trigger)
-	PollInterval     time.Duration
-	StabilizeTime    time.Duration
-	MinTriggerGap    time.Duration
+	// GitLab settings
+	GitLabAPIURL         string
+	GitLabGroupPath      string // e.g., "msteinert1/homeserver"
+	GitLabDefaultProject string // Fallback project for unmatched namespaces
+	GitLabRef            string
+
+	// Authentication (minimal permissions)
+	DeployToken     string // write_package_registry scope
+	DeployTokenUser string
+	TriggerToken    string // pipeline trigger only
+
+	// Timing
+	PollInterval  time.Duration
+	StabilizeTime time.Duration
+	MinTriggerGap time.Duration
+	CacheTTL      time.Duration
 }
+
+// ============================================================================
+// Project Cache - Caches project existence checks
+// ============================================================================
+
+type ProjectCache struct {
+	mu      sync.RWMutex
+	exists  map[string]bool
+	checked map[string]time.Time
+	ttl     time.Duration
+	apiURL  string
+	token   string
+}
+
+func NewProjectCache(ttl time.Duration, apiURL, token string) *ProjectCache {
+	return &ProjectCache{
+		exists:  make(map[string]bool),
+		checked: make(map[string]time.Time),
+		ttl:     ttl,
+		apiURL:  apiURL,
+		token:   token,
+	}
+}
+
+func (c *ProjectCache) Exists(projectPath string) bool {
+	c.mu.RLock()
+	if checkedAt, ok := c.checked[projectPath]; ok {
+		if time.Since(checkedAt) < c.ttl {
+			exists := c.exists[projectPath]
+			c.mu.RUnlock()
+			return exists
+		}
+	}
+	c.mu.RUnlock()
+
+	// Cache miss or expired - check via API
+	exists := c.checkViaAPI(projectPath)
+
+	c.mu.Lock()
+	c.exists[projectPath] = exists
+	c.checked[projectPath] = time.Now()
+	c.mu.Unlock()
+
+	return exists
+}
+
+func (c *ProjectCache) checkViaAPI(projectPath string) bool {
+	checkURL := fmt.Sprintf("%s/projects/%s", c.apiURL, url.PathEscape(projectPath))
+
+	req, err := http.NewRequest("GET", checkURL, nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("PRIVATE-TOKEN", c.token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	return resp.StatusCode == 200
+}
+
+// MarkExists explicitly marks a project as existing (for default project)
+func (c *ProjectCache) MarkExists(projectPath string) {
+	c.mu.Lock()
+	c.exists[projectPath] = true
+	c.checked[projectPath] = time.Now()
+	c.mu.Unlock()
+}
+
+// ============================================================================
+// Namespace State Tracking - Per-namespace hash and trigger tracking
+// ============================================================================
+
+type NamespaceState struct {
+	Hash            string
+	StableSince     time.Time
+	LastTriggerHash string
+	LastTriggerTime time.Time
+}
+
+type NamespaceTracker struct {
+	mu     sync.RWMutex
+	states map[string]*NamespaceState
+}
+
+func NewNamespaceTracker() *NamespaceTracker {
+	return &NamespaceTracker{
+		states: make(map[string]*NamespaceState),
+	}
+}
+
+func (t *NamespaceTracker) GetState(namespace string) *NamespaceState {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	state, ok := t.states[namespace]
+	if !ok {
+		state = &NamespaceState{}
+		t.states[namespace] = state
+	}
+	return state
+}
+
+func (t *NamespaceTracker) UpdateHash(namespace, hash string) (changed bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	state, ok := t.states[namespace]
+	if !ok {
+		state = &NamespaceState{}
+		t.states[namespace] = state
+	}
+
+	if state.Hash != hash {
+		state.Hash = hash
+		state.StableSince = time.Now()
+		return true
+	}
+	return false
+}
+
+func (t *NamespaceTracker) MarkTriggered(namespace, hash string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if state, ok := t.states[namespace]; ok {
+		state.LastTriggerHash = hash
+		state.LastTriggerTime = time.Now()
+	}
+}
+
+// ============================================================================
+// Project Resolution - Annotation → Convention → Default
+// ============================================================================
+
+const annotationGitLabProject = "trivy-watcher.io/gitlab-project"
+
+type ProjectResolver struct {
+	groupPath      string
+	defaultProject string
+	cache          *ProjectCache
+	client         dynamic.Interface
+}
+
+func NewProjectResolver(groupPath, defaultProject string, cache *ProjectCache, client dynamic.Interface) *ProjectResolver {
+	// Default project always exists
+	cache.MarkExists(defaultProject)
+
+	return &ProjectResolver{
+		groupPath:      groupPath,
+		defaultProject: defaultProject,
+		cache:          cache,
+		client:         client,
+	}
+}
+
+// Resolve determines the GitLab project for a namespace.
+// Returns (projectPath, isDefault)
+func (r *ProjectResolver) Resolve(ctx context.Context, namespace string) (string, bool) {
+	// 1. Check for explicit annotation
+	if project := r.getNamespaceAnnotation(ctx, namespace); project != "" {
+		if r.cache.Exists(project) {
+			return project, false
+		}
+		// Annotation points to non-existent project - fall through to default
+	}
+
+	// 2. Try convention-based resolution: {group}/{namespace}
+	if r.groupPath != "" {
+		conventionProject := fmt.Sprintf("%s/%s", r.groupPath, namespace)
+		if r.cache.Exists(conventionProject) {
+			return conventionProject, false
+		}
+	}
+
+	// 3. Fall back to default
+	return r.defaultProject, true
+}
+
+func (r *ProjectResolver) getNamespaceAnnotation(ctx context.Context, namespace string) string {
+	nsGVR := schema.GroupVersionResource{
+		Group:    "",
+		Version:  "v1",
+		Resource: "namespaces",
+	}
+
+	ns, err := r.client.Resource(nsGVR).Get(ctx, namespace, metav1.GetOptions{})
+	if err != nil {
+		return ""
+	}
+
+	annotations, _, _ := unstructured.NestedStringMap(ns.Object, "metadata", "annotations")
+	return annotations[annotationGitLabProject]
+}
+
+// ============================================================================
+// Main Application
+// ============================================================================
 
 func main() {
 	cfg := Config{
-		GitLabProjectID: os.Getenv("GITLAB_PROJECT_ID"),
-		GitLabRef:       getEnvOrDefault("GITLAB_REF", "main"),
-		GitLabAPIURL:    getEnvOrDefault("GITLAB_API_URL", "https://gitlab.com/api/v4"),
-		// Minimal permission tokens
-		DeployToken:     os.Getenv("DEPLOY_TOKEN"),      // write_package_registry only
-		DeployTokenUser: os.Getenv("DEPLOY_TOKEN_USER"), // e.g., "gitlab+deploy-token-123"
-		TriggerToken:    os.Getenv("TRIGGER_TOKEN"),     // pipeline trigger only
-		PollInterval:    getDurationEnv("POLL_INTERVAL", 10*time.Second),
-		StabilizeTime:   getDurationEnv("STABILIZE_TIME", 60*time.Second),
-		MinTriggerGap:   getDurationEnv("MIN_TRIGGER_GAP", 5*time.Minute),
+		GitLabAPIURL:         getEnvOrDefault("GITLAB_API_URL", "https://gitlab.com/api/v4"),
+		GitLabGroupPath:      os.Getenv("GITLAB_GROUP_PATH"),
+		GitLabDefaultProject: os.Getenv("GITLAB_DEFAULT_PROJECT"),
+		GitLabRef:            getEnvOrDefault("GITLAB_REF", "main"),
+		DeployToken:          os.Getenv("DEPLOY_TOKEN"),
+		DeployTokenUser:      os.Getenv("DEPLOY_TOKEN_USER"),
+		TriggerToken:         os.Getenv("TRIGGER_TOKEN"),
+		PollInterval:         getDurationEnv("POLL_INTERVAL", 10*time.Second),
+		StabilizeTime:        getDurationEnv("STABILIZE_TIME", 60*time.Second),
+		MinTriggerGap:        getDurationEnv("MIN_TRIGGER_GAP", 5*time.Minute),
+		CacheTTL:             getDurationEnv("CACHE_TTL", 5*time.Minute),
 	}
 
-	if cfg.GitLabProjectID == "" {
-		fmt.Println("ERROR: GITLAB_PROJECT_ID required")
-		os.Exit(1)
-	}
-	if cfg.DeployToken == "" || cfg.DeployTokenUser == "" {
-		fmt.Println("ERROR: DEPLOY_TOKEN and DEPLOY_TOKEN_USER required")
-		os.Exit(1)
-	}
-	if cfg.TriggerToken == "" {
-		fmt.Println("ERROR: TRIGGER_TOKEN required")
+	if err := validateConfig(cfg); err != nil {
+		fmt.Printf("ERROR: %v\n", err)
 		os.Exit(1)
 	}
 
-	// In-cluster Kubernetes config
 	k8sConfig, err := rest.InClusterConfig()
 	if err != nil {
 		fmt.Printf("ERROR: Failed to get k8s config: %v\n", err)
@@ -160,7 +367,6 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Handle shutdown
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -169,22 +375,49 @@ func main() {
 		cancel()
 	}()
 
-	fmt.Println("=== Trivy Vulnerability Watcher ===")
-	fmt.Printf("GitLab Project: %s\n", cfg.GitLabProjectID)
-	fmt.Printf("Poll Interval: %s\n", cfg.PollInterval)
-	fmt.Printf("Stabilization Time: %s\n", cfg.StabilizeTime)
-	fmt.Printf("Min Change Interval: %s\n", cfg.MinTriggerGap)
-	fmt.Printf("GitLab Ref: %s\n", cfg.GitLabRef)
-	fmt.Println()
-
+	printStartupBanner(cfg)
 	runWatcher(ctx, client, cfg)
 }
 
+func validateConfig(cfg Config) error {
+	if cfg.GitLabDefaultProject == "" {
+		return fmt.Errorf("GITLAB_DEFAULT_PROJECT required")
+	}
+	if cfg.DeployToken == "" || cfg.DeployTokenUser == "" {
+		return fmt.Errorf("DEPLOY_TOKEN and DEPLOY_TOKEN_USER required")
+	}
+	if cfg.TriggerToken == "" {
+		return fmt.Errorf("TRIGGER_TOKEN required")
+	}
+	return nil
+}
+
+func printStartupBanner(cfg Config) {
+	fmt.Println("=== Trivy Vulnerability Watcher ===")
+	fmt.Println()
+	fmt.Println("Configuration:")
+	fmt.Printf("  GitLab API:        %s\n", cfg.GitLabAPIURL)
+	if cfg.GitLabGroupPath != "" {
+		fmt.Printf("  Group Path:        %s\n", cfg.GitLabGroupPath)
+		fmt.Println("  Resolution:        namespace annotation → group/namespace → default")
+	} else {
+		fmt.Println("  Resolution:        namespace annotation → default")
+	}
+	fmt.Printf("  Default Project:   %s\n", cfg.GitLabDefaultProject)
+	fmt.Printf("  Git Ref:           %s\n", cfg.GitLabRef)
+	fmt.Println()
+	fmt.Println("Timing:")
+	fmt.Printf("  Poll Interval:     %s\n", cfg.PollInterval)
+	fmt.Printf("  Stabilize Time:    %s\n", cfg.StabilizeTime)
+	fmt.Printf("  Min Trigger Gap:   %s\n", cfg.MinTriggerGap)
+	fmt.Printf("  Cache TTL:         %s\n", cfg.CacheTTL)
+	fmt.Println()
+}
+
 func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config) {
-	var lastHash string
-	var stableSince time.Time
-	var lastTriggeredHash string
-	var lastTriggerTime time.Time
+	cache := NewProjectCache(cfg.CacheTTL, cfg.GitLabAPIURL, cfg.DeployToken)
+	resolver := NewProjectResolver(cfg.GitLabGroupPath, cfg.GitLabDefaultProject, cache, client)
+	tracker := NewNamespaceTracker()
 
 	vulnGVR := schema.GroupVersionResource{
 		Group:    "aquasecurity.github.io",
@@ -192,7 +425,8 @@ func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config) {
 		Resource: "vulnerabilityreports",
 	}
 
-	fmt.Println("Starting metrics monitoring...")
+	fmt.Println("Starting vulnerability monitoring...")
+	fmt.Println()
 
 	ticker := time.NewTicker(cfg.PollInterval)
 	defer ticker.Stop()
@@ -202,90 +436,207 @@ func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			reports, err := client.Resource(vulnGVR).List(ctx, metav1.ListOptions{})
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error fetching reports: %v\n", err)
-				continue
-			}
-
-			// Generate report and hash (hash only vulns, not timestamps)
-			secReport := convertToGitLabReport(reports.Items)
-			vulnsJSON, _ := json.Marshal(secReport.Vulnerabilities)
-			hash := fmt.Sprintf("%x", sha256.Sum256(vulnsJSON))[:16]
-
-			now := time.Now()
-
-			// First run
-			if lastHash == "" {
-				fmt.Printf("Initial metrics hash: %s...\n", hash)
-				lastHash = hash
-				stableSince = now
-				continue
-			}
-
-			// Hash changed
-			if hash != lastHash {
-				fmt.Printf("Metrics changed: %s... → %s...\n", lastHash, hash)
-				fmt.Println("  Waiting for scans to stabilize...")
-				lastHash = hash
-				stableSince = now
-				continue
-			}
-
-			// Check stabilization
-			stableFor := now.Sub(stableSince)
-			stableSec := int(stableFor.Seconds())
-			stabilizeSec := int(cfg.StabilizeTime.Seconds())
-
-			if stableFor < cfg.StabilizeTime {
-				remaining := stabilizeSec - stableSec
-				fmt.Printf("Metrics stable for %ds, waiting %ds more...\n", stableSec, remaining)
-				continue
-			}
-
-			// Already triggered this hash
-			if hash == lastTriggeredHash {
-				fmt.Printf("Metrics stable for %ds, but already triggered for this hash. Waiting for changes...\n", stableSec)
-				continue
-			}
-
-			// Min gap between triggers
-			timeSinceTrigger := now.Sub(lastTriggerTime)
-			if lastTriggerTime.Unix() > 0 && timeSinceTrigger < cfg.MinTriggerGap {
-				remaining := int((cfg.MinTriggerGap - timeSinceTrigger).Seconds())
-				fmt.Printf("Metrics stable, but triggered %ds ago. Waiting %ds more...\n",
-					int(timeSinceTrigger.Seconds()), remaining)
-				continue
-			}
-
-			// Trigger!
-			fmt.Printf("Metrics stable for %ds - triggering pipeline...\n", stableSec)
-
-			reportJSON, _ := json.Marshal(secReport)
-			reportURL, err := uploadToPackageRegistry(cfg, reportJSON)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error uploading report: %v\n", err)
-				continue
-			}
-
-			status, err := triggerPipeline(cfg, reportURL)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error triggering pipeline: %v\n", err)
-				continue
-			}
-
-			fmt.Printf("✓ Pipeline triggered successfully at %s\n", time.Now().UTC().Format(time.RFC3339))
-			fmt.Printf("  Response: %d\n", status)
-			lastTriggeredHash = hash
-			lastTriggerTime = now
+			processVulnerabilityReports(ctx, client, vulnGVR, resolver, tracker, cfg)
 		}
 	}
 }
 
-func convertToGitLabReport(items []unstructured.Unstructured) SecurityReport {
+// ============================================================================
+// Report Processing
+// ============================================================================
+
+func processVulnerabilityReports(
+	ctx context.Context,
+	client dynamic.Interface,
+	vulnGVR schema.GroupVersionResource,
+	resolver *ProjectResolver,
+	tracker *NamespaceTracker,
+	cfg Config,
+) {
+	reports, err := client.Resource(vulnGVR).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error fetching reports: %v\n", err)
+		return
+	}
+
+	if len(reports.Items) == 0 {
+		return
+	}
+
+	// Group vulnerabilities by namespace
+	byNamespace := groupByNamespace(reports.Items)
+
+	// Categorize: matched (has dedicated project) vs unmatched (goes to default)
+	type namespaceUpload struct {
+		namespace string
+		project   string
+		vulns     []Vulnerability
+		hash      string
+	}
+
+	var (
+		matched        []namespaceUpload
+		unmatchedNames []string
+		unmatchedVulns []Vulnerability
+	)
+
+	for ns, items := range byNamespace {
+		vulns := convertItemsToVulnerabilities(items)
+		hash := computeVulnHash(vulns)
+
+		project, isDefault := resolver.Resolve(ctx, ns)
+
+		if isDefault {
+			unmatchedNames = append(unmatchedNames, ns)
+			unmatchedVulns = append(unmatchedVulns, vulns...)
+		} else {
+			matched = append(matched, namespaceUpload{
+				namespace: ns,
+				project:   project,
+				vulns:     vulns,
+				hash:      hash,
+			})
+		}
+	}
+
+	// Sort for consistent log output
+	sort.Slice(matched, func(i, j int) bool {
+		return matched[i].namespace < matched[j].namespace
+	})
+	sort.Strings(unmatchedNames)
+
+	now := time.Now()
+
+	// Process matched namespaces (each gets its own upload)
+	for _, m := range matched {
+		processNamespaceUpload(m.namespace, m.project, m.vulns, m.hash, tracker, cfg, now)
+	}
+
+	// Process consolidated unmatched (single upload to default project)
+	if len(unmatchedVulns) > 0 {
+		// Re-sort consolidated vulns for consistent hash
+		sort.Slice(unmatchedVulns, func(i, j int) bool {
+			return unmatchedVulns[i].ID < unmatchedVulns[j].ID
+		})
+		consolidatedHash := computeVulnHash(unmatchedVulns)
+		processConsolidatedUpload(unmatchedNames, unmatchedVulns, consolidatedHash, tracker, cfg, now)
+	}
+}
+
+func processNamespaceUpload(
+	namespace, project string,
+	vulns []Vulnerability,
+	hash string,
+	tracker *NamespaceTracker,
+	cfg Config,
+	now time.Time,
+) {
+	state := tracker.GetState(namespace)
+
+	// Check if hash changed
+	if tracker.UpdateHash(namespace, hash) {
+		fmt.Printf("  [%s] Content changed (%d vulnerabilities), waiting to stabilize...\n",
+			namespace, len(vulns))
+		return
+	}
+
+	// Check stabilization
+	stableFor := now.Sub(state.StableSince)
+	if stableFor < cfg.StabilizeTime {
+		return // Still waiting, don't log every tick
+	}
+
+	// Already triggered this hash?
+	if hash == state.LastTriggerHash {
+		return
+	}
+
+	// Min gap between triggers?
+	if !state.LastTriggerTime.IsZero() && now.Sub(state.LastTriggerTime) < cfg.MinTriggerGap {
+		return
+	}
+
+	// Upload and trigger
+	fmt.Printf("  ✓ %s: %d vulnerabilities → %s\n", namespace, len(vulns), project)
+
+	report := buildSecurityReport(vulns)
+	if err := uploadAndTrigger(cfg, project, report); err != nil {
+		fmt.Fprintf(os.Stderr, "    Error: %v\n", err)
+		return
+	}
+
+	tracker.MarkTriggered(namespace, hash)
+}
+
+func processConsolidatedUpload(
+	namespaces []string,
+	vulns []Vulnerability,
+	hash string,
+	tracker *NamespaceTracker,
+	cfg Config,
+	now time.Time,
+) {
+	const consolidatedKey = "__consolidated__"
+	state := tracker.GetState(consolidatedKey)
+
+	// Check if hash changed
+	if tracker.UpdateHash(consolidatedKey, hash) {
+		fmt.Printf("  [consolidated] Content changed (%d vulnerabilities from %d namespaces)\n",
+			len(vulns), len(namespaces))
+		return
+	}
+
+	// Check stabilization
+	stableFor := now.Sub(state.StableSince)
+	if stableFor < cfg.StabilizeTime {
+		return
+	}
+
+	// Already triggered?
+	if hash == state.LastTriggerHash {
+		return
+	}
+
+	// Min gap?
+	if !state.LastTriggerTime.IsZero() && now.Sub(state.LastTriggerTime) < cfg.MinTriggerGap {
+		return
+	}
+
+	// Log consolidated upload
+	fmt.Println()
+	fmt.Printf("  Consolidated upload: %d vulnerabilities\n", len(vulns))
+	fmt.Printf("    Namespaces without dedicated project: [%s]\n", strings.Join(namespaces, ", "))
+	fmt.Printf("    → %s\n", cfg.GitLabDefaultProject)
+
+	report := buildSecurityReport(vulns)
+	if err := uploadAndTrigger(cfg, cfg.GitLabDefaultProject, report); err != nil {
+		fmt.Fprintf(os.Stderr, "    Error: %v\n", err)
+		return
+	}
+
+	tracker.MarkTriggered(consolidatedKey, hash)
+}
+
+// ============================================================================
+// Vulnerability Conversion
+// ============================================================================
+
+func groupByNamespace(items []unstructured.Unstructured) map[string][]unstructured.Unstructured {
+	groups := make(map[string][]unstructured.Unstructured)
+
+	for _, item := range items {
+		ns, _, _ := unstructured.NestedString(item.Object, "metadata", "namespace")
+		if ns == "" {
+			ns = "default"
+		}
+		groups[ns] = append(groups[ns], item)
+	}
+
+	return groups
+}
+
+func convertItemsToVulnerabilities(items []unstructured.Unstructured) []Vulnerability {
 	var vulns []Vulnerability
-	// GitLab expects format: 2024-01-02T15:04:05 (no timezone)
-	now := time.Now().UTC().Format("2006-01-02T15:04:05")
 
 	for _, item := range items {
 		report, _, _ := unstructured.NestedMap(item.Object, "report")
@@ -317,6 +668,18 @@ func convertToGitLabReport(items []unstructured.Unstructured) SecurityReport {
 		}
 		fullImage := fmt.Sprintf("%s:%s", image, tag)
 
+		// Get OS info
+		osMap, _, _ := unstructured.NestedMap(report, "os")
+		osFamily, _ := osMap["family"].(string)
+		osName, _ := osMap["name"].(string)
+		osInfo := osFamily
+		if osName != "" {
+			osInfo = fmt.Sprintf("%s %s", osFamily, osName)
+		}
+		if osInfo == "" {
+			osInfo = "Unknown"
+		}
+
 		vulnList, _, _ := unstructured.NestedSlice(report, "vulnerabilities")
 		for _, v := range vulnList {
 			vuln, ok := v.(map[string]interface{})
@@ -336,25 +699,11 @@ func convertToGitLabReport(items []unstructured.Unstructured) SecurityReport {
 				desc = d
 			}
 
-			// Get OS info from report
-			os, _, _ := unstructured.NestedMap(report, "os")
-			osFamily, _ := os["family"].(string)
-			osName, _ := os["name"].(string)
-			osInfo := osFamily
-			if osName != "" {
-				osInfo = fmt.Sprintf("%s %s", osFamily, osName)
-			}
-			if osInfo == "" {
-				osInfo = "Unknown"
-			}
-
-			// Build links only if URL is valid
 			var links []Link
 			if isValidURL(primaryURL) {
 				links = []Link{{URL: primaryURL}}
 			}
 
-			// Build identifier
 			ident := Ident{
 				Type:  "cve",
 				Name:  vulnID,
@@ -396,6 +745,12 @@ func convertToGitLabReport(items []unstructured.Unstructured) SecurityReport {
 		return vulns[i].ID < vulns[j].ID
 	})
 
+	return vulns
+}
+
+func buildSecurityReport(vulns []Vulnerability) SecurityReport {
+	now := time.Now().UTC().Format("2006-01-02T15:04:05")
+
 	return SecurityReport{
 		Version:         "15.0.0",
 		Vulnerabilities: vulns,
@@ -420,55 +775,71 @@ func convertToGitLabReport(items []unstructured.Unstructured) SecurityReport {
 	}
 }
 
-func uploadToPackageRegistry(cfg Config, report []byte) (string, error) {
-	// Compress report
+func computeVulnHash(vulns []Vulnerability) string {
+	data, _ := json.Marshal(vulns)
+	return fmt.Sprintf("%x", sha256.Sum256(data))[:16]
+}
+
+// ============================================================================
+// GitLab API
+// ============================================================================
+
+func uploadAndTrigger(cfg Config, project string, report SecurityReport) error {
+	reportJSON, err := json.Marshal(report)
+	if err != nil {
+		return fmt.Errorf("marshal report: %w", err)
+	}
+
+	if err := uploadToPackageRegistry(cfg, project, reportJSON); err != nil {
+		return fmt.Errorf("upload: %w", err)
+	}
+
+	if err := triggerPipeline(cfg, project); err != nil {
+		return fmt.Errorf("trigger: %w", err)
+	}
+
+	return nil
+}
+
+func uploadToPackageRegistry(cfg Config, project string, report []byte) error {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	if _, err := gz.Write(report); err != nil {
-		return "", fmt.Errorf("gzip write: %w", err)
+		return fmt.Errorf("gzip write: %w", err)
 	}
 	if err := gz.Close(); err != nil {
-		return "", fmt.Errorf("gzip close: %w", err)
+		return fmt.Errorf("gzip close: %w", err)
 	}
 
-	// Use fixed filename - CI job knows where to download
 	filename := "trivy-report-latest.json.gz"
-
 	uploadURL := fmt.Sprintf("%s/projects/%s/packages/generic/trivy-reports/1.0.0/%s",
-		cfg.GitLabAPIURL, url.PathEscape(cfg.GitLabProjectID), filename)
+		cfg.GitLabAPIURL, url.PathEscape(project), filename)
 
 	req, err := http.NewRequest("PUT", uploadURL, &buf)
 	if err != nil {
-		return "", fmt.Errorf("create request: %w", err)
+		return fmt.Errorf("create request: %w", err)
 	}
-	// Use Deploy Token with Basic Auth (minimal permissions: write_package_registry)
 	req.SetBasicAuth(cfg.DeployTokenUser, cfg.DeployToken)
 	req.Header.Set("Content-Type", "application/gzip")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("upload: %w", err)
+		return fmt.Errorf("http: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != 201 && resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("upload failed: %d - %s", resp.StatusCode, string(body))
+		return fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 	}
 
-	// Return download URL
-	downloadURL := fmt.Sprintf("%s/projects/%s/packages/generic/trivy-reports/1.0.0/%s",
-		cfg.GitLabAPIURL, url.PathEscape(cfg.GitLabProjectID), filename)
-
-	return downloadURL, nil
+	return nil
 }
 
-func triggerPipeline(cfg Config, reportURL string) (int, error) {
+func triggerPipeline(cfg Config, project string) error {
 	triggerURL := fmt.Sprintf("%s/projects/%s/trigger/pipeline",
-		cfg.GitLabAPIURL, url.PathEscape(cfg.GitLabProjectID))
+		cfg.GitLabAPIURL, url.PathEscape(project))
 
-	// Use Pipeline Trigger Token (minimal permissions: can only trigger pipelines)
-	// No variables - CI job uses fixed URL to download report
 	data := url.Values{
 		"token": {cfg.TriggerToken},
 		"ref":   {cfg.GitLabRef},
@@ -476,16 +847,21 @@ func triggerPipeline(cfg Config, reportURL string) (int, error) {
 
 	resp, err := http.PostForm(triggerURL, data)
 	if err != nil {
-		return 0, fmt.Errorf("trigger: %w", err)
+		return fmt.Errorf("http: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != 201 && resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return resp.StatusCode, fmt.Errorf("trigger failed: %d - %s", resp.StatusCode, string(body))
+		return fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 	}
-	return resp.StatusCode, nil
+
+	return nil
 }
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
 
 func isValidURL(s string) bool {
 	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
@@ -534,3 +910,4 @@ func getDurationEnv(key string, def time.Duration) time.Duration {
 	}
 	return def
 }
+

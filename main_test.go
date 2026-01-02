@@ -223,7 +223,8 @@ func TestConvertToGitLabReport(t *testing.T) {
 		},
 	}
 
-	report := convertToGitLabReport([]unstructured.Unstructured{item})
+	vulns := convertItemsToVulnerabilities([]unstructured.Unstructured{item})
+	report := buildSecurityReport(vulns)
 
 	// Check report structure
 	if report.Version != "15.0.0" {
@@ -317,7 +318,8 @@ func TestConvertToGitLabReportWithDescription(t *testing.T) {
 		},
 	}
 
-	report := convertToGitLabReport([]unstructured.Unstructured{item})
+	vulns := convertItemsToVulnerabilities([]unstructured.Unstructured{item})
+	report := buildSecurityReport(vulns)
 
 	if len(report.Vulnerabilities) != 1 {
 		t.Fatalf("Expected 1 vulnerability, got %d", len(report.Vulnerabilities))
@@ -358,7 +360,8 @@ func TestConvertToGitLabReportLongDescription(t *testing.T) {
 		},
 	}
 
-	report := convertToGitLabReport([]unstructured.Unstructured{item})
+	vulns := convertItemsToVulnerabilities([]unstructured.Unstructured{item})
+	report := buildSecurityReport(vulns)
 
 	// Description should be truncated to 500 chars + "..."
 	if len(report.Vulnerabilities[0].Description) > 504 {
@@ -388,9 +391,11 @@ func TestHashStability(t *testing.T) {
 	}
 
 	// Generate report twice (timestamps will differ)
-	report1 := convertToGitLabReport([]unstructured.Unstructured{item})
+	convertedVulns1 := convertItemsToVulnerabilities([]unstructured.Unstructured{item})
+	report1 := buildSecurityReport(convertedVulns1)
 	time.Sleep(10 * time.Millisecond) // Ensure different timestamp
-	report2 := convertToGitLabReport([]unstructured.Unstructured{item})
+	convertedVulns2 := convertItemsToVulnerabilities([]unstructured.Unstructured{item})
+	report2 := buildSecurityReport(convertedVulns2)
 
 	// Full report hash might differ (includes timestamps)
 	json1, _ := json.Marshal(report1)
@@ -400,10 +405,10 @@ func TestHashStability(t *testing.T) {
 	t.Logf("Full hash 1: %s, Full hash 2: %s", hash1Full, hash2Full)
 
 	// Vulnerabilities-only hash MUST be identical
-	vulns1, _ := json.Marshal(report1.Vulnerabilities)
-	vulns2, _ := json.Marshal(report2.Vulnerabilities)
-	hash1Vulns := fmt.Sprintf("%x", sha256.Sum256(vulns1))[:16]
-	hash2Vulns := fmt.Sprintf("%x", sha256.Sum256(vulns2))[:16]
+	vulnsJson1, _ := json.Marshal(report1.Vulnerabilities)
+	vulnsJson2, _ := json.Marshal(report2.Vulnerabilities)
+	hash1Vulns := fmt.Sprintf("%x", sha256.Sum256(vulnsJson1))[:16]
+	hash2Vulns := fmt.Sprintf("%x", sha256.Sum256(vulnsJson2))[:16]
 
 	if hash1Vulns != hash2Vulns {
 		t.Errorf("Vulnerability hashes should be identical: %s vs %s", hash1Vulns, hash2Vulns)
@@ -411,7 +416,8 @@ func TestHashStability(t *testing.T) {
 }
 
 func TestEmptyReport(t *testing.T) {
-	report := convertToGitLabReport([]unstructured.Unstructured{})
+	vulns := convertItemsToVulnerabilities([]unstructured.Unstructured{})
+	report := buildSecurityReport(vulns)
 
 	if len(report.Vulnerabilities) != 0 {
 		t.Errorf("Expected 0 vulnerabilities, got %d", len(report.Vulnerabilities))
@@ -447,7 +453,8 @@ func TestVulnerabilityID(t *testing.T) {
 		},
 	}
 
-	report := convertToGitLabReport([]unstructured.Unstructured{item})
+	vulns := convertItemsToVulnerabilities([]unstructured.Unstructured{item})
+	report := buildSecurityReport(vulns)
 
 	if len(report.Vulnerabilities) != 1 {
 		t.Fatalf("Expected 1 vulnerability, got %d", len(report.Vulnerabilities))
@@ -487,7 +494,8 @@ func TestMissingTag(t *testing.T) {
 		},
 	}
 
-	report := convertToGitLabReport([]unstructured.Unstructured{item})
+	vulns := convertItemsToVulnerabilities([]unstructured.Unstructured{item})
+	report := buildSecurityReport(vulns)
 
 	// Should default to "latest"
 	expectedImage := "nginx:latest"
@@ -508,7 +516,8 @@ func TestMissingReport(t *testing.T) {
 		},
 	}
 
-	report := convertToGitLabReport([]unstructured.Unstructured{item})
+	vulns := convertItemsToVulnerabilities([]unstructured.Unstructured{item})
+	report := buildSecurityReport(vulns)
 
 	// Should handle gracefully
 	if len(report.Vulnerabilities) != 0 {
@@ -539,7 +548,8 @@ func TestMissingMetadataDefaults(t *testing.T) {
 		},
 	}
 
-	report := convertToGitLabReport([]unstructured.Unstructured{item})
+	vulns := convertItemsToVulnerabilities([]unstructured.Unstructured{item})
+	report := buildSecurityReport(vulns)
 
 	if len(report.Vulnerabilities) != 1 {
 		t.Fatalf("Expected 1 vulnerability, got %d", len(report.Vulnerabilities))
@@ -614,7 +624,8 @@ func TestMultipleReports(t *testing.T) {
 		},
 	}
 
-	report := convertToGitLabReport(items)
+	vulns := convertItemsToVulnerabilities(items)
+	report := buildSecurityReport(vulns)
 
 	// Should have 3 vulnerabilities total
 	if len(report.Vulnerabilities) != 3 {
@@ -794,7 +805,8 @@ func BenchmarkConvertToGitLabReport(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		convertToGitLabReport(items)
+		vulns := convertItemsToVulnerabilities(items)
+		buildSecurityReport(vulns)
 	}
 }
 
@@ -803,5 +815,344 @@ func BenchmarkMapSeverity(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		mapSeverity(severities[i%len(severities)])
+	}
+}
+
+// ============================================================================
+// Namespace Grouping Tests
+// ============================================================================
+
+func TestGroupByNamespace(t *testing.T) {
+	items := []unstructured.Unstructured{
+		{
+			Object: map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"namespace": "mediastack",
+					"name":      "report-1",
+				},
+			},
+		},
+		{
+			Object: map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"namespace": "mediastack",
+					"name":      "report-2",
+				},
+			},
+		},
+		{
+			Object: map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"namespace": "gitlab",
+					"name":      "report-3",
+				},
+			},
+		},
+		{
+			Object: map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"namespace": "kube-system",
+					"name":      "report-4",
+				},
+			},
+		},
+	}
+
+	groups := groupByNamespace(items)
+
+	if len(groups) != 3 {
+		t.Errorf("Expected 3 namespace groups, got %d", len(groups))
+	}
+
+	if len(groups["mediastack"]) != 2 {
+		t.Errorf("Expected 2 items in mediastack, got %d", len(groups["mediastack"]))
+	}
+
+	if len(groups["gitlab"]) != 1 {
+		t.Errorf("Expected 1 item in gitlab, got %d", len(groups["gitlab"]))
+	}
+
+	if len(groups["kube-system"]) != 1 {
+		t.Errorf("Expected 1 item in kube-system, got %d", len(groups["kube-system"]))
+	}
+}
+
+func TestGroupByNamespaceEmpty(t *testing.T) {
+	groups := groupByNamespace([]unstructured.Unstructured{})
+	if len(groups) != 0 {
+		t.Errorf("Expected 0 groups for empty input, got %d", len(groups))
+	}
+}
+
+func TestGroupByNamespaceMissingNamespace(t *testing.T) {
+	items := []unstructured.Unstructured{
+		{
+			Object: map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"name": "report-no-ns",
+				},
+			},
+		},
+	}
+
+	groups := groupByNamespace(items)
+
+	// Should default to "default" namespace
+	if len(groups["default"]) != 1 {
+		t.Errorf("Expected 1 item in 'default', got %d", len(groups["default"]))
+	}
+}
+
+// ============================================================================
+// Namespace Tracker Tests
+// ============================================================================
+
+func TestNamespaceTrackerBasic(t *testing.T) {
+	tracker := NewNamespaceTracker()
+
+	// Initial state
+	state := tracker.GetState("test-ns")
+	if state.Hash != "" {
+		t.Error("Initial hash should be empty")
+	}
+
+	// Update hash
+	changed := tracker.UpdateHash("test-ns", "abc123")
+	if !changed {
+		t.Error("First update should return changed=true")
+	}
+
+	state = tracker.GetState("test-ns")
+	if state.Hash != "abc123" {
+		t.Errorf("Hash should be 'abc123', got %q", state.Hash)
+	}
+
+	// Same hash - no change
+	changed = tracker.UpdateHash("test-ns", "abc123")
+	if changed {
+		t.Error("Same hash should return changed=false")
+	}
+
+	// Different hash
+	changed = tracker.UpdateHash("test-ns", "def456")
+	if !changed {
+		t.Error("Different hash should return changed=true")
+	}
+}
+
+func TestNamespaceTrackerMarkTriggered(t *testing.T) {
+	tracker := NewNamespaceTracker()
+
+	// Setup initial state
+	tracker.UpdateHash("test-ns", "hash1")
+	tracker.MarkTriggered("test-ns", "hash1")
+
+	state := tracker.GetState("test-ns")
+	if state.LastTriggerHash != "hash1" {
+		t.Errorf("LastTriggerHash should be 'hash1', got %q", state.LastTriggerHash)
+	}
+	if state.LastTriggerTime.IsZero() {
+		t.Error("LastTriggerTime should not be zero")
+	}
+}
+
+func TestNamespaceTrackerConcurrentAccess(t *testing.T) {
+	tracker := NewNamespaceTracker()
+	done := make(chan bool)
+
+	// Concurrent writes
+	for i := 0; i < 100; i++ {
+		go func(n int) {
+			ns := fmt.Sprintf("ns-%d", n%10)
+			tracker.UpdateHash(ns, fmt.Sprintf("hash-%d", n))
+			tracker.GetState(ns)
+			done <- true
+		}(i)
+	}
+
+	// Wait for all goroutines
+	for i := 0; i < 100; i++ {
+		<-done
+	}
+}
+
+// ============================================================================
+// Project Cache Tests
+// ============================================================================
+
+func TestProjectCacheMarkExists(t *testing.T) {
+	cache := NewProjectCache(5*time.Minute, "https://example.com", "token")
+
+	// Mark as existing
+	cache.MarkExists("group/project")
+
+	if !cache.Exists("group/project") {
+		t.Error("Project should exist after MarkExists")
+	}
+}
+
+func TestProjectCacheTTL(t *testing.T) {
+	// Very short TTL for testing
+	cache := NewProjectCache(10*time.Millisecond, "https://example.com", "token")
+
+	// Mark as existing
+	cache.MarkExists("group/project")
+
+	if !cache.Exists("group/project") {
+		t.Error("Project should exist immediately after MarkExists")
+	}
+
+	// Wait for TTL to expire
+	time.Sleep(20 * time.Millisecond)
+
+	// After TTL, cache will try API call which will fail
+	// So it should return false (project doesn't exist from cache perspective)
+	// Note: In real usage, checkViaAPI would be called
+}
+
+// ============================================================================
+// Hash Computation Tests
+// ============================================================================
+
+func TestComputeVulnHash(t *testing.T) {
+	vulns1 := []Vulnerability{
+		{ID: "vuln-1", Name: "CVE-1"},
+		{ID: "vuln-2", Name: "CVE-2"},
+	}
+
+	vulns2 := []Vulnerability{
+		{ID: "vuln-1", Name: "CVE-1"},
+		{ID: "vuln-2", Name: "CVE-2"},
+	}
+
+	vulns3 := []Vulnerability{
+		{ID: "vuln-1", Name: "CVE-1"},
+		{ID: "vuln-3", Name: "CVE-3"},
+	}
+
+	hash1 := computeVulnHash(vulns1)
+	hash2 := computeVulnHash(vulns2)
+	hash3 := computeVulnHash(vulns3)
+
+	if hash1 != hash2 {
+		t.Errorf("Identical vulns should produce same hash: %s vs %s", hash1, hash2)
+	}
+
+	if hash1 == hash3 {
+		t.Errorf("Different vulns should produce different hash: %s vs %s", hash1, hash3)
+	}
+
+	// Hash should be 16 chars (first 16 of sha256 hex)
+	if len(hash1) != 16 {
+		t.Errorf("Hash should be 16 chars, got %d", len(hash1))
+	}
+}
+
+func TestComputeVulnHashEmpty(t *testing.T) {
+	hash := computeVulnHash([]Vulnerability{})
+
+	if hash == "" {
+		t.Error("Empty vulns should still produce a hash")
+	}
+}
+
+// ============================================================================
+// Build Security Report Tests
+// ============================================================================
+
+func TestBuildSecurityReport(t *testing.T) {
+	vulns := []Vulnerability{
+		{ID: "test-1", Name: "CVE-1", Severity: "High"},
+	}
+
+	report := buildSecurityReport(vulns)
+
+	if report.Version != "15.0.0" {
+		t.Errorf("Version = %q, want '15.0.0'", report.Version)
+	}
+
+	if len(report.Vulnerabilities) != 1 {
+		t.Errorf("Expected 1 vulnerability, got %d", len(report.Vulnerabilities))
+	}
+
+	if report.Scan.Type != "cluster_image_scanning" {
+		t.Errorf("Scan.Type = %q, want 'cluster_image_scanning'", report.Scan.Type)
+	}
+
+	if report.Scan.Status != "success" {
+		t.Errorf("Scan.Status = %q, want 'success'", report.Scan.Status)
+	}
+
+	// Timestamps should be set
+	if report.Scan.StartAt == "" {
+		t.Error("StartAt should not be empty")
+	}
+}
+
+// ============================================================================
+// Config Validation Tests
+// ============================================================================
+
+func TestValidateConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     Config
+		wantErr bool
+	}{
+		{
+			name: "valid config",
+			cfg: Config{
+				GitLabDefaultProject: "group/project",
+				DeployToken:          "token",
+				DeployTokenUser:      "user",
+				TriggerToken:         "trigger",
+			},
+			wantErr: false,
+		},
+		{
+			name: "missing default project",
+			cfg: Config{
+				DeployToken:     "token",
+				DeployTokenUser: "user",
+				TriggerToken:    "trigger",
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing deploy token",
+			cfg: Config{
+				GitLabDefaultProject: "group/project",
+				DeployTokenUser:      "user",
+				TriggerToken:         "trigger",
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing deploy token user",
+			cfg: Config{
+				GitLabDefaultProject: "group/project",
+				DeployToken:          "token",
+				TriggerToken:         "trigger",
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing trigger token",
+			cfg: Config{
+				GitLabDefaultProject: "group/project",
+				DeployToken:          "token",
+				DeployTokenUser:      "user",
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateConfig(tc.cfg)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("validateConfig() error = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
 	}
 }

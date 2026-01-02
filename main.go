@@ -827,7 +827,10 @@ func triggerPipelineWithAccessToken(cfg Config, project string) error {
 	pipelineURL := fmt.Sprintf("%s/projects/%s/pipeline",
 		cfg.GitLabAPIURL, url.PathEscape(project))
 
-	body := fmt.Sprintf(`{"ref":"%s"}`, cfg.GitLabRef)
+	// Pass TRIVY_TRIGGERED variable so CI can detect trivy-watcher triggers
+	// This is more elegant than checking CI_PIPELINE_SOURCE since it works
+	// regardless of whether we use /pipeline (source=api) or /trigger/pipeline (source=trigger)
+	body := fmt.Sprintf(`{"ref":"%s","variables":[{"key":"TRIVY_TRIGGERED","value":"true"}]}`, cfg.GitLabRef)
 	req, err := http.NewRequest("POST", pipelineURL, strings.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)

@@ -88,7 +88,7 @@ func TestUploadToPackageRegistry(t *testing.T) {
 func TestUploadToPackageRegistryError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"error":"forbidden"}`))
+		_, _ = w.Write([]byte(`{"error":"forbidden"}`))
 	}))
 	defer server.Close()
 
@@ -125,10 +125,10 @@ func TestTriggerPipelineWithAccessToken(t *testing.T) {
 		receivedToken = r.Header.Get("PRIVATE-TOKEN")
 
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &receivedBody)
+		_ = json.Unmarshal(body, &receivedBody)
 
 		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte(`{"id":123}`))
+		_, _ = w.Write([]byte(`{"id":123}`))
 	}))
 	defer server.Close()
 
@@ -177,7 +177,7 @@ func TestTriggerPipelineWithTriggerToken(t *testing.T) {
 			t.Errorf("Unexpected path: %s", r.URL.Path)
 		}
 
-		r.ParseForm()
+		_ = r.ParseForm()
 		receivedToken = r.FormValue("token")
 		receivedRef = r.FormValue("ref")
 

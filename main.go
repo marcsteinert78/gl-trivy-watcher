@@ -491,6 +491,10 @@ func processVulnerabilityReports(
 	)
 
 	for ns, items := range byNamespace {
+		// Sort items by name for consistent processing order
+		sort.Slice(items, func(i, j int) bool {
+			return items[i].GetName() < items[j].GetName()
+		})
 		vulns := convertItemsToVulnerabilities(items)
 		hash := computeVulnHash(vulns)
 
@@ -524,9 +528,14 @@ func processVulnerabilityReports(
 
 	// Process consolidated unmatched (single upload to default project)
 	if len(unmatchedVulns) > 0 {
-		// Re-sort consolidated vulns for consistent hash
+		// Re-sort consolidated vulns for consistent hash (stable sort with secondary key)
 		sort.Slice(unmatchedVulns, func(i, j int) bool {
-			return unmatchedVulns[i].ID < unmatchedVulns[j].ID
+			if unmatchedVulns[i].ID != unmatchedVulns[j].ID {
+				return unmatchedVulns[i].ID < unmatchedVulns[j].ID
+			}
+			// Secondary sort by location for stability
+			return unmatchedVulns[i].Location.Image+unmatchedVulns[i].Location.KubernetesResource.Name <
+				unmatchedVulns[j].Location.Image+unmatchedVulns[j].Location.KubernetesResource.Name
 		})
 		consolidatedHash := computeVulnHash(unmatchedVulns)
 		processConsolidatedUpload(unmatchedNames, unmatchedVulns, consolidatedHash, tracker, cfg, now)
@@ -750,9 +759,14 @@ func convertItemsToVulnerabilities(items []unstructured.Unstructured) []Vulnerab
 		}
 	}
 
-	// Sort for consistent hashing
+	// Sort for consistent hashing (stable sort with secondary key)
 	sort.Slice(vulns, func(i, j int) bool {
-		return vulns[i].ID < vulns[j].ID
+		if vulns[i].ID != vulns[j].ID {
+			return vulns[i].ID < vulns[j].ID
+		}
+		// Secondary sort by location for stability
+		return vulns[i].Location.Image+vulns[i].Location.KubernetesResource.Name <
+			vulns[j].Location.Image+vulns[j].Location.KubernetesResource.Name
 	})
 
 	return vulns

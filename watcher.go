@@ -133,7 +133,7 @@ func processVulnerabilityReports(
 	fmt.Printf("[%s] Total: %d VulnerabilityReports, %d vulnerabilities\n\n", now.Format("15:04:05"), len(reports.Items), totalVulns)
 
 	byNamespace := groupByNamespace(reports.Items)
-	performNamespaceUploads(ctx, byNamespace, resolver, cfg)
+	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg)
 
 	// Mark as triggered
 	tracker.MarkTriggered(globalKey, globalHash)
@@ -166,16 +166,19 @@ func computeGlobalHash(items []unstructured.Unstructured) string {
 }
 
 // performNamespaceUploads uploads vulnerabilities grouped by namespace.
+// Only uploads namespaces where the vulnerability hash changed since last upload.
 func performNamespaceUploads(
 	ctx context.Context,
 	byNamespace map[string][]unstructured.Unstructured,
 	resolver *ProjectResolver,
+	tracker *NamespaceTracker,
 	cfg Config,
 ) {
 	type nsUpload struct {
 		namespace string
 		project   string
 		vulns     []Vulnerability
+		hash      string
 	}
 
 	var matched []nsUpload
@@ -190,10 +193,12 @@ func performNamespaceUploads(
 			unmatchedNames = append(unmatchedNames, ns)
 			unmatchedVulns = append(unmatchedVulns, vulns...)
 		} else {
+			hash := computeVulnHash(vulns)
 			matched = append(matched, nsUpload{
 				namespace: ns,
 				project:   project,
 				vulns:     vulns,
+				hash:      hash,
 			})
 		}
 	}
@@ -204,34 +209,57 @@ func performNamespaceUploads(
 	})
 	sort.Strings(unmatchedNames)
 
-	// Upload matched namespaces
+	// Upload matched namespaces (only if hash changed)
 	uploadCount := 0
+	skippedCount := 0
 	for _, m := range matched {
 		if len(m.vulns) == 0 {
 			fmt.Printf("  ○ %s: 0 vulnerabilities (skipped)\n", m.namespace)
 			continue
 		}
+
+		// Check if hash changed since last upload
+		state := tracker.GetState(m.namespace)
+		if state.LastTriggerHash == m.hash {
+			skippedCount++
+			continue // No change, skip upload
+		}
+
 		report := buildSecurityReport(m.vulns)
 		fmt.Printf("  → %s: %d vulnerabilities → %s\n", m.namespace, len(m.vulns), m.project)
 		if err := uploadAndTrigger(cfg, m.project, report); err != nil {
 			fmt.Fprintf(os.Stderr, "    ERROR: %v\n", err)
 		} else {
+			tracker.MarkTriggered(m.namespace, m.hash)
 			uploadCount++
 		}
 	}
 
-	// Upload consolidated unmatched
+	// Upload consolidated unmatched (only if hash changed)
 	if len(unmatchedVulns) > 0 {
-		report := buildSecurityReport(unmatchedVulns)
-		fmt.Printf("  → consolidated (%d namespaces): %d vulnerabilities → %s\n",
-			len(unmatchedNames), len(unmatchedVulns), cfg.GitLabDefaultProject)
-		fmt.Printf("    Namespaces: %v\n", unmatchedNames)
-		if err := uploadAndTrigger(cfg, cfg.GitLabDefaultProject, report); err != nil {
-			fmt.Fprintf(os.Stderr, "    ERROR: %v\n", err)
+		consolidatedHash := computeVulnHash(unmatchedVulns)
+		consolidatedKey := "__consolidated__"
+		state := tracker.GetState(consolidatedKey)
+
+		if state.LastTriggerHash != consolidatedHash {
+			report := buildSecurityReport(unmatchedVulns)
+			fmt.Printf("  → consolidated (%d namespaces): %d vulnerabilities → %s\n",
+				len(unmatchedNames), len(unmatchedVulns), cfg.GitLabDefaultProject)
+			fmt.Printf("    Namespaces: %v\n", unmatchedNames)
+			if err := uploadAndTrigger(cfg, cfg.GitLabDefaultProject, report); err != nil {
+				fmt.Fprintf(os.Stderr, "    ERROR: %v\n", err)
+			} else {
+				tracker.MarkTriggered(consolidatedKey, consolidatedHash)
+				uploadCount++
+			}
 		} else {
-			uploadCount++
+			skippedCount++
 		}
 	}
 
-	fmt.Printf("\nUploads complete: %d projects updated\n", uploadCount)
+	if skippedCount > 0 {
+		fmt.Printf("\nUploads complete: %d updated, %d unchanged (skipped)\n", uploadCount, skippedCount)
+	} else {
+		fmt.Printf("\nUploads complete: %d projects updated\n", uploadCount)
+	}
 }

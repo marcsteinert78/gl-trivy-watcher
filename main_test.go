@@ -917,9 +917,12 @@ func TestNamespaceTrackerBasic(t *testing.T) {
 	}
 
 	// Update hash
-	changed := tracker.UpdateHash("test-ns", "abc123")
+	changed, oldHash := tracker.UpdateHash("test-ns", "abc123")
 	if !changed {
 		t.Error("First update should return changed=true")
+	}
+	if oldHash != "" {
+		t.Errorf("First update oldHash should be empty, got %q", oldHash)
 	}
 
 	state = tracker.GetState("test-ns")
@@ -928,15 +931,21 @@ func TestNamespaceTrackerBasic(t *testing.T) {
 	}
 
 	// Same hash - no change
-	changed = tracker.UpdateHash("test-ns", "abc123")
+	changed, oldHash = tracker.UpdateHash("test-ns", "abc123")
 	if changed {
 		t.Error("Same hash should return changed=false")
 	}
+	if oldHash != "abc123" {
+		t.Errorf("oldHash should be 'abc123', got %q", oldHash)
+	}
 
 	// Different hash
-	changed = tracker.UpdateHash("test-ns", "def456")
+	changed, oldHash = tracker.UpdateHash("test-ns", "def456")
 	if !changed {
 		t.Error("Different hash should return changed=true")
+	}
+	if oldHash != "abc123" {
+		t.Errorf("oldHash should be 'abc123', got %q", oldHash)
 	}
 }
 

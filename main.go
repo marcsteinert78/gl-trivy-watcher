@@ -368,7 +368,7 @@ func convertToGitLabReport(items []unstructured.Unstructured) SecurityReport {
 				ID:          fmt.Sprintf("%s-%s-%s", vulnID, sanitize(image), pkgName),
 				Category:    "cluster_image_scanning",
 				Name:        vulnID,
-				Message:     fmt.Sprintf("%s in %s (%s)", vulnID, pkgName, fullImage),
+				Message:     fmt.Sprintf("%s in %s [%s/%s/%s]", vulnID, pkgName, namespace, resourceName, containerName),
 				Description: firstN(desc, 500),
 				Severity:    mapSeverity(severity),
 				Location: Location{

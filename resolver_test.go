@@ -1,0 +1,234 @@
+package main
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+)
+
+// Resolve returns (project, isDefault) where:
+// - isDefault=false: project was found (via annotation or convention)
+// - isDefault=true: using default project (fallback)
+
+func TestProjectResolverFindsViaConvention(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "mediastack") {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	cache := NewProjectCache(5*time.Minute, server.URL, "token")
+	resolver := NewProjectResolver("msteinert1/homeserver", "default/project", cache, nil)
+
+	ctx := context.Background()
+	project, isDefault := resolver.Resolve(ctx, "mediastack")
+
+	if project != "msteinert1/homeserver/mediastack" {
+		t.Errorf("project = %q, want 'msteinert1/homeserver/mediastack'", project)
+	}
+	if isDefault {
+		t.Error("isDefault should be false when project found via convention")
+	}
+}
+
+func TestProjectResolverFallbackToDefault(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	cache := NewProjectCache(5*time.Minute, server.URL, "token")
+	resolver := NewProjectResolver("msteinert1/homeserver", "default/fallback", cache, nil)
+
+	ctx := context.Background()
+	project, isDefault := resolver.Resolve(ctx, "unknown-namespace")
+
+	if project != "default/fallback" {
+		t.Errorf("project = %q, want 'default/fallback'", project)
+	}
+	if !isDefault {
+		t.Error("isDefault should be true when falling back to default")
+	}
+}
+
+func TestProjectResolverCachesAPIResult(t *testing.T) {
+	apiCallCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiCallCount++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cache := NewProjectCache(5*time.Minute, server.URL, "token")
+	resolver := NewProjectResolver("group", "default/project", cache, nil)
+
+	ctx := context.Background()
+
+	resolver.Resolve(ctx, "test-ns")
+	firstCount := apiCallCount
+
+	resolver.Resolve(ctx, "test-ns")
+
+	if apiCallCount != firstCount {
+		t.Errorf("Second call should use cache, API called %d times", apiCallCount)
+	}
+}
+
+func TestProjectResolverEmptyGroupPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("API should not be called when groupPath is empty")
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	cache := NewProjectCache(time.Minute, server.URL, "token")
+	resolver := NewProjectResolver("", "default/project", cache, nil)
+
+	ctx := context.Background()
+	project, isDefault := resolver.Resolve(ctx, "test-ns")
+
+	if project != "default/project" {
+		t.Errorf("project = %q, want 'default/project'", project)
+	}
+	if !isDefault {
+		t.Error("isDefault should be true when groupPath is empty (skip convention)")
+	}
+}
+
+func TestProjectResolverDefaultProjectMarkedInCache(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Logf("API call: %s", r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	cache := NewProjectCache(time.Minute, server.URL, "token")
+	_ = NewProjectResolver("group", "group/default", cache, nil)
+
+	if !cache.Exists("group/default") {
+		t.Error("Default project should be pre-marked as existing")
+	}
+}
+
+func TestProjectResolverNilClientSkipsAnnotation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cache := NewProjectCache(time.Minute, server.URL, "token")
+	resolver := NewProjectResolver("group", "group/default", cache, nil)
+
+	ctx := context.Background()
+	project, isDefault := resolver.Resolve(ctx, "test")
+
+	if project != "group/test" {
+		t.Errorf("project = %q, want 'group/test'", project)
+	}
+	if isDefault {
+		t.Error("isDefault should be false when found via convention")
+	}
+}
+
+func TestNewProjectResolver(t *testing.T) {
+	cache := NewProjectCache(time.Minute, "https://gitlab.com", "token")
+	resolver := NewProjectResolver("group/subgroup", "group/default", cache, nil)
+
+	if resolver == nil {
+		t.Fatal("NewProjectResolver returned nil")
+	}
+	if resolver.groupPath != "group/subgroup" {
+		t.Errorf("groupPath = %q, want 'group/subgroup'", resolver.groupPath)
+	}
+	if resolver.defaultProject != "group/default" {
+		t.Errorf("defaultProject = %q, want 'group/default'", resolver.defaultProject)
+	}
+}
+
+func TestProjectCacheCheckViaAPI(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("PRIVATE-TOKEN") != "test-token" {
+			t.Error("Missing PRIVATE-TOKEN header")
+		}
+		if strings.Contains(r.URL.Path, "existing") {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	cache := NewProjectCache(time.Minute, server.URL, "test-token")
+
+	if !cache.Exists("existing") {
+		t.Error("Existing project should return true")
+	}
+	if cache.Exists("nonexistent") {
+		t.Error("Nonexistent project should return false")
+	}
+}
+
+func TestProjectCacheExpiration(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cache := NewProjectCache(10*time.Millisecond, server.URL, "token")
+
+	cache.Exists("project")
+	if callCount != 1 {
+		t.Errorf("First call: expected 1 API call, got %d", callCount)
+	}
+
+	cache.Exists("project")
+	if callCount != 1 {
+		t.Errorf("Second call: expected cache hit, got %d API calls", callCount)
+	}
+
+	time.Sleep(15 * time.Millisecond)
+
+	cache.Exists("project")
+	if callCount != 2 {
+		t.Errorf("After TTL: expected 2 API calls, got %d", callCount)
+	}
+}
+
+func TestProjectCacheMarkExists(t *testing.T) {
+	cache := NewProjectCache(time.Minute, "http://unused", "token")
+	cache.MarkExists("my/project")
+
+	if !cache.Exists("my/project") {
+		t.Error("MarkExists should make Exists return true")
+	}
+}
+
+func TestProjectCacheConcurrent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cache := NewProjectCache(time.Minute, server.URL, "token")
+
+	done := make(chan bool, 100)
+	for i := 0; i < 100; i++ {
+		go func() {
+			cache.Exists("project")
+			cache.MarkExists("another")
+			done <- true
+		}()
+	}
+
+	for i := 0; i < 100; i++ {
+		<-done
+	}
+}

@@ -25,7 +25,7 @@ func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config) {
 	cache := NewProjectCache(cfg.CacheTTL, cfg.GitLabAPIURL, cacheToken)
 	resolver := NewProjectResolver(cfg.GitLabGroupPath, cfg.GitLabDefaultProject, cache, client)
 	tracker := NewNamespaceTracker()
-	progress := NewProgressDisplay(2 * time.Second)
+	progress := NewProgressDisplay(10 * time.Second)
 
 	vulnGVR := schema.GroupVersionResource{
 		Group:    "aquasecurity.github.io",

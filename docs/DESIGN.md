@@ -108,7 +108,36 @@ Unmatched namespaces:   kube-system    ─┐
 | `GITLAB_API_URL` | GitLab API base URL | `https://gitlab.com/api/v4` |
 | `DEPLOY_TOKEN` | Token with `write_package_registry` scope | - |
 | `DEPLOY_TOKEN_USER` | Deploy token username | - |
-| `TRIGGER_TOKEN` | Pipeline trigger token | - |
+| `GITLAB_ACCESS_TOKEN` | Access Token with `api` scope (multi-project) | - |
+| `TRIGGER_TOKEN` | Pipeline trigger token (single-project, legacy) | - |
+
+**Note**: Either `GITLAB_ACCESS_TOKEN` or `TRIGGER_TOKEN` is required. For multi-project setups, use `GITLAB_ACCESS_TOKEN`.
+
+### Authentication Strategy
+
+#### Single-Project Mode (Legacy)
+- `TRIGGER_TOKEN`: Project-specific pipeline trigger token
+- Only works for the configured project
+- Minimal permissions (can only trigger pipelines)
+
+#### Multi-Project Mode (Recommended for per-namespace)
+- `GITLAB_ACCESS_TOKEN`: Group Access Token or PAT with `api` scope
+- Works across all projects in the group
+- Required for per-namespace uploads to different projects
+
+**Security Trade-off**:
+
+| Mode | Token Scope | Risk | Use When |
+|------|-------------|------|----------|
+| Single-Project | `trigger` only | Minimal | All vulns → one project |
+| Multi-Project | `api` (broad) | Higher | Per-namespace projects |
+
+**Mitigation for Multi-Project Mode**:
+1. Use **Group Access Token** (not personal) - can be revoked without affecting user
+2. Set **expiration date** on token (max 1 year recommended)
+3. Limit token to **specific group** (not instance-wide)
+4. Store in **Kubernetes Secret** with restricted RBAC
+5. Consider **IP allowlist** if GitLab supports it
 
 ### Project Existence Caching
 
@@ -283,13 +312,57 @@ The report JSON must also include:
 
 ### Security Considerations
 
-1. **Token Scope**: Use minimal permissions
-   - Deploy Token: `write_package_registry` only
-   - Trigger Token: Can only trigger pipelines (no code access)
+#### Token Types and Scopes
 
-2. **Group-Level Tokens**: For multi-project setups, use group-level tokens that work across all projects in the group.
+| Token | Scope | Purpose | Risk Level |
+|-------|-------|---------|------------|
+| Deploy Token | `write_package_registry` | Upload reports to Package Registry | Low |
+| Trigger Token | Pipeline trigger only | Trigger CI pipelines | Low |
+| Group Access Token | `api` | Multi-project pipeline triggers | Medium |
+| Personal Access Token | `api` | Multi-project (not recommended) | High |
 
-3. **Namespace Isolation**: Each namespace's vulnerabilities are only visible in their designated project.
+#### Recommended Setup
+
+**For Single-Project (all vulns → one project)**:
+```
+DEPLOY_TOKEN=gldt-xxx          # Group deploy token
+DEPLOY_TOKEN_USER=gitlab+deploy-token-N
+TRIGGER_TOKEN=glptt-xxx        # Project trigger token
+```
+
+**For Multi-Project (per-namespace)**:
+```
+DEPLOY_TOKEN=gldt-xxx          # Group deploy token (same for all)
+DEPLOY_TOKEN_USER=gitlab+deploy-token-N
+GITLAB_ACCESS_TOKEN=glpat-xxx  # Group Access Token with api scope
+```
+
+#### Security Best Practices
+
+1. **Prefer Group Access Tokens over PATs**
+   - Can be revoked without affecting user accounts
+   - Scoped to specific group only
+   - Clear ownership and audit trail
+
+2. **Token Expiration**
+   - Set maximum 1 year expiration
+   - Rotate tokens regularly
+   - Monitor token usage in GitLab audit logs
+
+3. **Kubernetes Secret Storage**
+   - Store tokens in Kubernetes Secrets (not ConfigMaps)
+   - Use `stringData` for clarity, GitLab encodes automatically
+   - Restrict access via RBAC to trivy-watcher ServiceAccount only
+
+4. **Network Isolation**
+   - Trivy-watcher only needs egress to GitLab API
+   - Consider NetworkPolicy to restrict other egress
+   - If self-hosted GitLab: internal network only
+
+5. **Namespace Isolation**
+   - Each namespace's vulns only visible in their project
+   - Teams cannot see other teams' vulnerabilities
+   - Consolidated report (default project) may contain cross-team data
 
 ### Future Enhancements
 

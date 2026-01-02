@@ -119,10 +119,11 @@ type Config struct {
 	GitLabDefaultProject string // Fallback project for unmatched namespaces
 	GitLabRef            string
 
-	// Authentication (minimal permissions)
-	DeployToken     string // write_package_registry scope
-	DeployTokenUser string
-	TriggerToken    string // pipeline trigger only
+	// Authentication
+	DeployToken       string // write_package_registry scope (group-level works for all projects)
+	DeployTokenUser   string
+	GitLabAccessToken string // PAT or Group Token with api scope (for multi-project pipeline triggers)
+	TriggerToken      string // Legacy: project-specific pipeline trigger (single-project only)
 
 	// Timing
 	PollInterval  time.Duration
@@ -340,6 +341,7 @@ func main() {
 		GitLabRef:            getEnvOrDefault("GITLAB_REF", "main"),
 		DeployToken:          os.Getenv("DEPLOY_TOKEN"),
 		DeployTokenUser:      os.Getenv("DEPLOY_TOKEN_USER"),
+		GitLabAccessToken:    os.Getenv("GITLAB_ACCESS_TOKEN"),
 		TriggerToken:         os.Getenv("TRIGGER_TOKEN"),
 		PollInterval:         getDurationEnv("POLL_INTERVAL", 10*time.Second),
 		StabilizeTime:        getDurationEnv("STABILIZE_TIME", 60*time.Second),
@@ -386,8 +388,8 @@ func validateConfig(cfg Config) error {
 	if cfg.DeployToken == "" || cfg.DeployTokenUser == "" {
 		return fmt.Errorf("DEPLOY_TOKEN and DEPLOY_TOKEN_USER required")
 	}
-	if cfg.TriggerToken == "" {
-		return fmt.Errorf("TRIGGER_TOKEN required")
+	if cfg.GitLabAccessToken == "" && cfg.TriggerToken == "" {
+		return fmt.Errorf("GITLAB_ACCESS_TOKEN or TRIGGER_TOKEN required")
 	}
 	return nil
 }
@@ -405,6 +407,14 @@ func printStartupBanner(cfg Config) {
 	}
 	fmt.Printf("  Default Project:   %s\n", cfg.GitLabDefaultProject)
 	fmt.Printf("  Git Ref:           %s\n", cfg.GitLabRef)
+	fmt.Println()
+	fmt.Println("Authentication:")
+	fmt.Printf("  Deploy Token:      %s (upload)\n", cfg.DeployTokenUser)
+	if cfg.GitLabAccessToken != "" {
+		fmt.Println("  Pipeline Trigger:  Access Token (multi-project)")
+	} else {
+		fmt.Println("  Pipeline Trigger:  Trigger Token (single-project)")
+	}
 	fmt.Println()
 	fmt.Println("Timing:")
 	fmt.Printf("  Poll Interval:     %s\n", cfg.PollInterval)
@@ -837,6 +847,40 @@ func uploadToPackageRegistry(cfg Config, project string, report []byte) error {
 }
 
 func triggerPipeline(cfg Config, project string) error {
+	// Prefer GitLabAccessToken (works across projects) over TriggerToken (project-specific)
+	if cfg.GitLabAccessToken != "" {
+		return triggerPipelineWithAccessToken(cfg, project)
+	}
+	return triggerPipelineWithTriggerToken(cfg, project)
+}
+
+func triggerPipelineWithAccessToken(cfg Config, project string) error {
+	pipelineURL := fmt.Sprintf("%s/projects/%s/pipeline",
+		cfg.GitLabAPIURL, url.PathEscape(project))
+
+	body := fmt.Sprintf(`{"ref":"%s"}`, cfg.GitLabRef)
+	req, err := http.NewRequest("POST", pipelineURL, strings.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("PRIVATE-TOKEN", cfg.GitLabAccessToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("http: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != 201 && resp.StatusCode != 200 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
+func triggerPipelineWithTriggerToken(cfg Config, project string) error {
 	triggerURL := fmt.Sprintf("%s/projects/%s/trigger/pipeline",
 		cfg.GitLabAPIURL, url.PathEscape(project))
 

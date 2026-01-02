@@ -473,167 +473,112 @@ func processVulnerabilityReports(
 		return
 	}
 
-	// Group vulnerabilities by namespace
-	byNamespace := groupByNamespace(reports.Items)
+	// Step 1: Compute hash of ALL reports (simple: count + resource versions)
+	globalHash := computeGlobalHash(reports.Items)
+	now := time.Now()
 
-	// Categorize: matched (has dedicated project) vs unmatched (goes to default)
-	type namespaceUpload struct {
+	// Step 2: Check if content changed
+	const globalKey = "__global__"
+	state := tracker.GetState(globalKey)
+
+	if tracker.UpdateHash(globalKey, globalHash) {
+		fmt.Printf("Content changed (%d reports), waiting to stabilize...\n", len(reports.Items))
+		return
+	}
+
+	// Step 3: Check if stable long enough
+	stableFor := now.Sub(state.StableSince)
+	if stableFor < cfg.StabilizeTime {
+		return // Still stabilizing, wait silently
+	}
+
+	// Step 4: Check if already triggered for this hash
+	if state.LastTriggerHash == globalHash {
+		return // Already processed this state
+	}
+
+	// Step 5: Check min gap between triggers
+	if !state.LastTriggerTime.IsZero() && now.Sub(state.LastTriggerTime) < cfg.MinTriggerGap {
+		return
+	}
+
+	// Step 6: Content stable - now split by namespace and upload
+	fmt.Printf("Content stable for %s, processing uploads...\n", stableFor.Round(time.Second))
+
+	byNamespace := groupByNamespace(reports.Items)
+	performNamespaceUploads(ctx, byNamespace, resolver, cfg)
+
+	// Mark as triggered
+	tracker.MarkTriggered(globalKey, globalHash)
+}
+
+func computeGlobalHash(items []unstructured.Unstructured) string {
+	// Hash based on resource versions (changes when any report changes)
+	var versions []string
+	for _, item := range items {
+		versions = append(versions, item.GetName()+":"+item.GetResourceVersion())
+	}
+	sort.Strings(versions)
+	data, _ := json.Marshal(versions)
+	return fmt.Sprintf("%x", sha256.Sum256(data))[:16]
+}
+
+func performNamespaceUploads(
+	ctx context.Context,
+	byNamespace map[string][]unstructured.Unstructured,
+	resolver *ProjectResolver,
+	cfg Config,
+) {
+	type nsUpload struct {
 		namespace string
 		project   string
 		vulns     []Vulnerability
-		hash      string
 	}
 
-	var (
-		matched        []namespaceUpload
-		unmatchedNames []string
-		unmatchedVulns []Vulnerability
-	)
+	var matched []nsUpload
+	var unmatchedNames []string
+	var unmatchedVulns []Vulnerability
 
 	for ns, items := range byNamespace {
-		// Sort items by name for consistent processing order
-		sort.Slice(items, func(i, j int) bool {
-			return items[i].GetName() < items[j].GetName()
-		})
 		vulns := convertItemsToVulnerabilities(items)
-		hash := computeVulnHash(vulns)
-
 		project, isDefault := resolver.Resolve(ctx, ns)
 
 		if isDefault {
 			unmatchedNames = append(unmatchedNames, ns)
 			unmatchedVulns = append(unmatchedVulns, vulns...)
 		} else {
-			matched = append(matched, namespaceUpload{
+			matched = append(matched, nsUpload{
 				namespace: ns,
 				project:   project,
 				vulns:     vulns,
-				hash:      hash,
 			})
 		}
 	}
 
-	// Sort for consistent log output
+	// Sort for consistent output
 	sort.Slice(matched, func(i, j int) bool {
 		return matched[i].namespace < matched[j].namespace
 	})
 	sort.Strings(unmatchedNames)
 
-	now := time.Now()
-
-	// Process matched namespaces (each gets its own upload)
+	// Upload matched namespaces
 	for _, m := range matched {
-		processNamespaceUpload(m.namespace, m.project, m.vulns, m.hash, tracker, cfg, now)
+		report := buildSecurityReport(m.vulns)
+		fmt.Printf("  [%s] Uploading %d vulnerabilities → %s\n", m.namespace, len(m.vulns), m.project)
+		if err := uploadAndTrigger(cfg, m.project, report); err != nil {
+			fmt.Fprintf(os.Stderr, "  [%s] ERROR: %v\n", m.namespace, err)
+		}
 	}
 
-	// Process consolidated unmatched (single upload to default project)
+	// Upload consolidated unmatched
 	if len(unmatchedVulns) > 0 {
-		// Re-sort consolidated vulns for consistent hash (stable sort with secondary key)
-		sort.Slice(unmatchedVulns, func(i, j int) bool {
-			if unmatchedVulns[i].ID != unmatchedVulns[j].ID {
-				return unmatchedVulns[i].ID < unmatchedVulns[j].ID
-			}
-			// Secondary sort by location for stability
-			return unmatchedVulns[i].Location.Image+unmatchedVulns[i].Location.KubernetesResource.Name <
-				unmatchedVulns[j].Location.Image+unmatchedVulns[j].Location.KubernetesResource.Name
-		})
-		consolidatedHash := computeVulnHash(unmatchedVulns)
-		processConsolidatedUpload(unmatchedNames, unmatchedVulns, consolidatedHash, tracker, cfg, now)
+		report := buildSecurityReport(unmatchedVulns)
+		fmt.Printf("  [consolidated] Uploading %d vulnerabilities from %v → %s\n",
+			len(unmatchedVulns), unmatchedNames, cfg.GitLabDefaultProject)
+		if err := uploadAndTrigger(cfg, cfg.GitLabDefaultProject, report); err != nil {
+			fmt.Fprintf(os.Stderr, "  [consolidated] ERROR: %v\n", err)
+		}
 	}
-}
-
-func processNamespaceUpload(
-	namespace, project string,
-	vulns []Vulnerability,
-	hash string,
-	tracker *NamespaceTracker,
-	cfg Config,
-	now time.Time,
-) {
-	state := tracker.GetState(namespace)
-
-	// Check if hash changed
-	if tracker.UpdateHash(namespace, hash) {
-		fmt.Printf("  [%s] Content changed (%d vulnerabilities), waiting to stabilize...\n",
-			namespace, len(vulns))
-		return
-	}
-
-	// Check stabilization
-	stableFor := now.Sub(state.StableSince)
-	if stableFor < cfg.StabilizeTime {
-		return // Still waiting, don't log every tick
-	}
-
-	// Already triggered this hash?
-	if hash == state.LastTriggerHash {
-		return
-	}
-
-	// Min gap between triggers?
-	if !state.LastTriggerTime.IsZero() && now.Sub(state.LastTriggerTime) < cfg.MinTriggerGap {
-		return
-	}
-
-	// Upload and trigger
-	fmt.Printf("  ✓ %s: %d vulnerabilities → %s\n", namespace, len(vulns), project)
-
-	report := buildSecurityReport(vulns)
-	if err := uploadAndTrigger(cfg, project, report); err != nil {
-		fmt.Fprintf(os.Stderr, "    Error: %v\n", err)
-		return
-	}
-
-	tracker.MarkTriggered(namespace, hash)
-}
-
-func processConsolidatedUpload(
-	namespaces []string,
-	vulns []Vulnerability,
-	hash string,
-	tracker *NamespaceTracker,
-	cfg Config,
-	now time.Time,
-) {
-	const consolidatedKey = "__consolidated__"
-	state := tracker.GetState(consolidatedKey)
-
-	// Check if hash changed
-	if tracker.UpdateHash(consolidatedKey, hash) {
-		fmt.Printf("  [consolidated] Content changed (%d vulnerabilities from %d namespaces)\n",
-			len(vulns), len(namespaces))
-		return
-	}
-
-	// Check stabilization
-	stableFor := now.Sub(state.StableSince)
-	if stableFor < cfg.StabilizeTime {
-		return
-	}
-
-	// Already triggered?
-	if hash == state.LastTriggerHash {
-		return
-	}
-
-	// Min gap?
-	if !state.LastTriggerTime.IsZero() && now.Sub(state.LastTriggerTime) < cfg.MinTriggerGap {
-		return
-	}
-
-	// Log consolidated upload
-	fmt.Println()
-	fmt.Printf("  Consolidated upload: %d vulnerabilities\n", len(vulns))
-	fmt.Printf("    Namespaces without dedicated project: [%s]\n", strings.Join(namespaces, ", "))
-	fmt.Printf("    → %s\n", cfg.GitLabDefaultProject)
-
-	report := buildSecurityReport(vulns)
-	if err := uploadAndTrigger(cfg, cfg.GitLabDefaultProject, report); err != nil {
-		fmt.Fprintf(os.Stderr, "    Error: %v\n", err)
-		return
-	}
-
-	tracker.MarkTriggered(consolidatedKey, hash)
 }
 
 // ============================================================================

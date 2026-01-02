@@ -56,8 +56,6 @@ func (p *ProgressDisplay) Stop() {
 		close(p.stopCh)
 		<-p.doneCh
 		p.active = false
-		// Clear the line
-		fmt.Print("\r\033[K")
 	}
 }
 
@@ -90,8 +88,8 @@ func (p *ProgressDisplay) run() {
 				timeStr = fmt.Sprintf("%ds", int(remaining.Seconds()))
 			}
 
-			// Print with carriage return to overwrite
-			fmt.Printf("\r[%s] %s %s... %s remaining  ",
+			// Print on new line (works with kubectl logs)
+			fmt.Printf("[%s] %s %s... %s remaining\n",
 				time.Now().Format("15:04:05"), spinner, p.message, timeStr)
 		}
 	}

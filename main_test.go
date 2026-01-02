@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -192,6 +193,9 @@ func TestConvertToGitLabReport(t *testing.T) {
 			"metadata": map[string]interface{}{
 				"name":      "test-report",
 				"namespace": "default",
+				"labels": map[string]interface{}{
+					"trivy-operator.container.name": "nginx",
+				},
 			},
 			"report": map[string]interface{}{
 				"artifact": map[string]interface{}{
@@ -267,6 +271,27 @@ func TestConvertToGitLabReport(t *testing.T) {
 		if v.Category != "cluster_image_scanning" {
 			t.Errorf("Category = %q, want 'cluster_image_scanning'", v.Category)
 		}
+	}
+
+	// Check kubernetes_resource fields
+	v := report.Vulnerabilities[0]
+	if v.Location.KubernetesResource.Namespace != "default" {
+		t.Errorf("Namespace = %q, want %q", v.Location.KubernetesResource.Namespace, "default")
+	}
+	if v.Location.KubernetesResource.Name != "test-report" {
+		t.Errorf("Name = %q, want %q", v.Location.KubernetesResource.Name, "test-report")
+	}
+	if v.Location.KubernetesResource.ContainerName != "nginx" {
+		t.Errorf("ContainerName = %q, want %q", v.Location.KubernetesResource.ContainerName, "nginx")
+	}
+	if v.Location.KubernetesResource.Kind != "Pod" {
+		t.Errorf("Kind = %q, want %q", v.Location.KubernetesResource.Kind, "Pod")
+	}
+
+	// Check message format includes kubernetes context [namespace/name/container]
+	expectedMsgSuffix := "[default/test-report/nginx]"
+	if !strings.Contains(v.Message, expectedMsgSuffix) {
+		t.Errorf("Message = %q, should contain %q", v.Message, expectedMsgSuffix)
 	}
 }
 
@@ -488,6 +513,55 @@ func TestMissingReport(t *testing.T) {
 	// Should handle gracefully
 	if len(report.Vulnerabilities) != 0 {
 		t.Errorf("Expected 0 vulnerabilities for missing report, got %d", len(report.Vulnerabilities))
+	}
+}
+
+func TestMissingMetadataDefaults(t *testing.T) {
+	// Item without namespace, name or container label
+	item := unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"report": map[string]interface{}{
+				"artifact": map[string]interface{}{
+					"repository": "nginx",
+					"tag":        "1.21",
+				},
+				"vulnerabilities": []interface{}{
+					map[string]interface{}{
+						"vulnerabilityID": "CVE-2021-12345",
+						"severity":        "HIGH",
+						"resource":        "libssl",
+						"title":           "Test vuln",
+						"primaryLink":     "https://example.com",
+					},
+				},
+			},
+			// No metadata at all
+		},
+	}
+
+	report := convertToGitLabReport([]unstructured.Unstructured{item})
+
+	if len(report.Vulnerabilities) != 1 {
+		t.Fatalf("Expected 1 vulnerability, got %d", len(report.Vulnerabilities))
+	}
+
+	v := report.Vulnerabilities[0]
+
+	// Check defaults are applied
+	if v.Location.KubernetesResource.Namespace != "unknown" {
+		t.Errorf("Namespace = %q, want %q (default)", v.Location.KubernetesResource.Namespace, "unknown")
+	}
+	if v.Location.KubernetesResource.Name != "unknown" {
+		t.Errorf("Name = %q, want %q (default)", v.Location.KubernetesResource.Name, "unknown")
+	}
+	if v.Location.KubernetesResource.ContainerName != "main" {
+		t.Errorf("ContainerName = %q, want %q (default)", v.Location.KubernetesResource.ContainerName, "main")
+	}
+
+	// Message should contain the defaults
+	expectedMsgSuffix := "[unknown/unknown/main]"
+	if !strings.Contains(v.Message, expectedMsgSuffix) {
+		t.Errorf("Message = %q, should contain %q", v.Message, expectedMsgSuffix)
 	}
 }
 

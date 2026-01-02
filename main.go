@@ -425,7 +425,13 @@ func printStartupBanner(cfg Config) {
 }
 
 func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config) {
-	cache := NewProjectCache(cfg.CacheTTL, cfg.GitLabAPIURL, cfg.DeployToken)
+	// Use GitLabAccessToken for project checks (it has api scope)
+	// DeployToken only has write_package_registry, can't read projects
+	cacheToken := cfg.GitLabAccessToken
+	if cacheToken == "" {
+		cacheToken = cfg.DeployToken // Fallback, but project checks will fail
+	}
+	cache := NewProjectCache(cfg.CacheTTL, cfg.GitLabAPIURL, cacheToken)
 	resolver := NewProjectResolver(cfg.GitLabGroupPath, cfg.GitLabDefaultProject, cache, client)
 	tracker := NewNamespaceTracker()
 

@@ -25,6 +25,7 @@ func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config) {
 	cache := NewProjectCache(cfg.CacheTTL, cfg.GitLabAPIURL, cacheToken)
 	resolver := NewProjectResolver(cfg.GitLabGroupPath, cfg.GitLabDefaultProject, cache, client)
 	tracker := NewNamespaceTracker()
+	progress := NewProgressDisplay(2 * time.Second)
 
 	vulnGVR := schema.GroupVersionResource{
 		Group:    "aquasecurity.github.io",
@@ -42,10 +43,11 @@ func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config) {
 	for {
 		select {
 		case <-ctx.Done():
+			progress.Stop()
 			return
 		case <-ticker.C:
 			pollCount++
-			processVulnerabilityReports(ctx, client, vulnGVR, resolver, tracker, cfg, pollCount)
+			processVulnerabilityReports(ctx, client, vulnGVR, resolver, tracker, progress, cfg, pollCount)
 		}
 	}
 }
@@ -57,9 +59,12 @@ func processVulnerabilityReports(
 	vulnGVR schema.GroupVersionResource,
 	resolver *ProjectResolver,
 	tracker *NamespaceTracker,
+	progress *ProgressDisplay,
 	cfg Config,
 	pollCount int,
 ) {
+	// Stop any active progress display at start of each poll
+	progress.Stop()
 	reports, err := client.Resource(vulnGVR).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error fetching reports: %v\n", err)
@@ -94,18 +99,17 @@ func processVulnerabilityReports(
 			fmt.Printf("[%s] Content changed: %d VulnerabilityReports, %d vulnerabilities (hash: %s → %s)\n",
 				now.Format("15:04:05"), len(reports.Items), totalVulns, oldHash, globalHash)
 		}
-		fmt.Printf("[%s] Waiting %s for stabilization...\n", now.Format("15:04:05"), cfg.StabilizeTime)
+		// Start progress display for stabilization
+		progress.Start("Stabilizing", now.Add(cfg.StabilizeTime))
 		return
 	}
 
 	// Step 3: Check if stable long enough
 	stableFor := now.Sub(state.StableSince)
 	if stableFor < cfg.StabilizeTime {
-		// Show progress every 6 polls during stabilization
-		if pollCount%6 == 0 {
-			remaining := cfg.StabilizeTime - stableFor
-			fmt.Printf("[%s] Stabilizing... %s remaining\n", now.Format("15:04:05"), remaining.Round(time.Second))
-		}
+		// Continue progress display during stabilization
+		endTime := state.StableSince.Add(cfg.StabilizeTime)
+		progress.Start("Stabilizing", endTime)
 		return
 	}
 
@@ -121,10 +125,9 @@ func processVulnerabilityReports(
 
 	// Step 5: Check min gap between triggers
 	if !state.LastTriggerTime.IsZero() && now.Sub(state.LastTriggerTime) < cfg.MinTriggerGap {
-		remaining := cfg.MinTriggerGap - now.Sub(state.LastTriggerTime)
-		if pollCount%6 == 0 {
-			fmt.Printf("[%s] Rate limited, next trigger in %s\n", now.Format("15:04:05"), remaining.Round(time.Second))
-		}
+		// Show progress display for rate limiting
+		endTime := state.LastTriggerTime.Add(cfg.MinTriggerGap)
+		progress.Start("Rate limited", endTime)
 		return
 	}
 

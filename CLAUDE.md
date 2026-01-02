@@ -23,3 +23,9 @@
 
 ## Build
 Pipeline uses Kaniko for rootless container builds.
+
+## GitLab Tokens
+- **Validity**: 11 months (expire in December at earliest)
+- **Location**: `~/.config/gitlab/gitlab.local` (self-hosted), `~/.config/gitlab/gitlab.com` (SaaS)
+- **IMPORTANT**: ALWAYS read the token from config file with `tr -d '\n'` BEFORE making API calls
+- **Usage**: `curl -s --header "PRIVATE-TOKEN: $(tr -d '\n' < ~/.config/gitlab/gitlab.local)" ...`

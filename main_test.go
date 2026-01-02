@@ -134,34 +134,34 @@ func TestIsValidURL(t *testing.T) {
 	}
 }
 
-func TestGetEnvOrDefault(t *testing.T) {
+func TestGetEnv(t *testing.T) {
 	// Test with existing env var
 	t.Setenv("TEST_ENV_VAR", "test_value")
 
-	result := getEnvOrDefault("TEST_ENV_VAR", "default")
+	result := getEnv("TEST_ENV_VAR", "default")
 	if result != "test_value" {
 		t.Errorf("Expected 'test_value', got %q", result)
 	}
 
 	// Test with non-existing env var
-	result = getEnvOrDefault("NON_EXISTING_VAR", "default_value")
+	result = getEnv("NON_EXISTING_VAR", "default_value")
 	if result != "default_value" {
 		t.Errorf("Expected 'default_value', got %q", result)
 	}
 
 	// Test with empty env var
 	t.Setenv("EMPTY_VAR", "")
-	result = getEnvOrDefault("EMPTY_VAR", "default")
+	result = getEnv("EMPTY_VAR", "default")
 	if result != "default" {
 		t.Errorf("Expected 'default' for empty var, got %q", result)
 	}
 }
 
-func TestGetDurationEnv(t *testing.T) {
+func TestGetDuration(t *testing.T) {
 	// Test with valid duration
 	t.Setenv("TEST_DURATION", "30s")
 
-	result := getDurationEnv("TEST_DURATION", time.Minute)
+	result := getDuration("TEST_DURATION", time.Minute)
 	if result != 30*time.Second {
 		t.Errorf("Expected 30s, got %v", result)
 	}
@@ -169,13 +169,13 @@ func TestGetDurationEnv(t *testing.T) {
 	// Test with invalid duration
 	t.Setenv("INVALID_DURATION", "not-a-duration")
 
-	result = getDurationEnv("INVALID_DURATION", time.Minute)
+	result = getDuration("INVALID_DURATION", time.Minute)
 	if result != time.Minute {
 		t.Errorf("Expected default 1m, got %v", result)
 	}
 
 	// Test with non-existing var
-	result = getDurationEnv("NON_EXISTING_DURATION", 5*time.Minute)
+	result = getDuration("NON_EXISTING_DURATION", 5*time.Minute)
 	if result != 5*time.Minute {
 		t.Errorf("Expected default 5m, got %v", result)
 	}
@@ -986,40 +986,6 @@ func TestNamespaceTrackerConcurrentAccess(t *testing.T) {
 }
 
 // ============================================================================
-// Project Cache Tests
-// ============================================================================
-
-func TestProjectCacheMarkExists(t *testing.T) {
-	cache := NewProjectCache(5*time.Minute, "https://example.com", "token")
-
-	// Mark as existing
-	cache.MarkExists("group/project")
-
-	if !cache.Exists("group/project") {
-		t.Error("Project should exist after MarkExists")
-	}
-}
-
-func TestProjectCacheTTL(t *testing.T) {
-	// Very short TTL for testing
-	cache := NewProjectCache(10*time.Millisecond, "https://example.com", "token")
-
-	// Mark as existing
-	cache.MarkExists("group/project")
-
-	if !cache.Exists("group/project") {
-		t.Error("Project should exist immediately after MarkExists")
-	}
-
-	// Wait for TTL to expire
-	time.Sleep(20 * time.Millisecond)
-
-	// After TTL, cache will try API call which will fail
-	// So it should return false (project doesn't exist from cache perspective)
-	// Note: In real usage, checkViaAPI would be called
-}
-
-// ============================================================================
 // Hash Computation Tests
 // ============================================================================
 
@@ -1158,9 +1124,9 @@ func TestValidateConfig(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateConfig(tc.cfg)
+			err := tc.cfg.Validate()
 			if (err != nil) != tc.wantErr {
-				t.Errorf("validateConfig() error = %v, wantErr %v", err, tc.wantErr)
+				t.Errorf("Config.Validate() error = %v, wantErr %v", err, tc.wantErr)
 			}
 		})
 	}

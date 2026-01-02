@@ -9,6 +9,9 @@ variables:
   IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
   IMAGE_LATEST: $CI_REGISTRY_IMAGE:latest
   GO_VERSION: "1.25"
+  # Enable GitLab Advanced SAST (Ultimate feature)
+  # https://docs.gitlab.com/user/application_security/sast/gitlab_advanced_sast/
+  GITLAB_ADVANCED_SAST_ENABLED: "true"
 
 # ============================================================================
 # Test Stage
@@ -69,6 +72,7 @@ test:build:
 
 include:
   - template: Security/SAST.gitlab-ci.yml
+  - template: Security/SAST-IaC.gitlab-ci.yml
   - template: Security/Dependency-Scanning.gitlab-ci.yml
   - template: Security/Secret-Detection.gitlab-ci.yml
   - template: Security/Container-Scanning.gitlab-ci.yml

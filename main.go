@@ -569,6 +569,10 @@ func performNamespaceUploads(
 
 	// Upload matched namespaces
 	for _, m := range matched {
+		if len(m.vulns) == 0 {
+			fmt.Printf("  [%s] Skipping (0 vulnerabilities)\n", m.namespace)
+			continue
+		}
 		report := buildSecurityReport(m.vulns)
 		fmt.Printf("  [%s] Uploading %d vulnerabilities → %s\n", m.namespace, len(m.vulns), m.project)
 		if err := uploadAndTrigger(cfg, m.project, report); err != nil {

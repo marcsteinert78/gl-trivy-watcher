@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -26,23 +27,27 @@ type Config struct {
 	StabilizeTime time.Duration
 	MinTriggerGap time.Duration
 	CacheTTL      time.Duration
+
+	// Namespaces to always include (even without VulnerabilityReports)
+	AlwaysIncludeNamespaces []string
 }
 
 // LoadConfig reads configuration from environment variables.
 func LoadConfig() Config {
 	return Config{
-		GitLabAPIURL:         getEnv("GITLAB_API_URL", "https://gitlab.com/api/v4"),
-		GitLabGroupPath:      os.Getenv("GITLAB_GROUP_PATH"),
-		GitLabDefaultProject: os.Getenv("GITLAB_DEFAULT_PROJECT"),
-		GitLabRef:            getEnv("GITLAB_REF", "main"),
-		DeployToken:          os.Getenv("DEPLOY_TOKEN"),
-		DeployTokenUser:      os.Getenv("DEPLOY_TOKEN_USER"),
-		GitLabAccessToken:    os.Getenv("GITLAB_ACCESS_TOKEN"),
-		TriggerToken:         os.Getenv("TRIGGER_TOKEN"),
-		PollInterval:         getDuration("POLL_INTERVAL", 10*time.Second),
-		StabilizeTime:        getDuration("STABILIZE_TIME", 60*time.Second),
-		MinTriggerGap:        getDuration("MIN_TRIGGER_GAP", 5*time.Minute),
-		CacheTTL:             getDuration("CACHE_TTL", 5*time.Minute),
+		GitLabAPIURL:            getEnv("GITLAB_API_URL", "https://gitlab.com/api/v4"),
+		GitLabGroupPath:         os.Getenv("GITLAB_GROUP_PATH"),
+		GitLabDefaultProject:    os.Getenv("GITLAB_DEFAULT_PROJECT"),
+		GitLabRef:               getEnv("GITLAB_REF", "main"),
+		DeployToken:             os.Getenv("DEPLOY_TOKEN"),
+		DeployTokenUser:         os.Getenv("DEPLOY_TOKEN_USER"),
+		GitLabAccessToken:       os.Getenv("GITLAB_ACCESS_TOKEN"),
+		TriggerToken:            os.Getenv("TRIGGER_TOKEN"),
+		PollInterval:            getDuration("POLL_INTERVAL", 10*time.Second),
+		StabilizeTime:           getDuration("STABILIZE_TIME", 60*time.Second),
+		MinTriggerGap:           getDuration("MIN_TRIGGER_GAP", 5*time.Minute),
+		CacheTTL:                getDuration("CACHE_TTL", 5*time.Minute),
+		AlwaysIncludeNamespaces: getStringSlice("ALWAYS_INCLUDE_NAMESPACES", []string{"default"}),
 	}
 }
 
@@ -77,6 +82,9 @@ func (c Config) PrintBanner() {
 	}
 	fmt.Printf("  Default Project:   %s\n", c.GitLabDefaultProject)
 	fmt.Printf("  Git Ref:           %s\n", c.GitLabRef)
+	if len(c.AlwaysIncludeNamespaces) > 0 {
+		fmt.Printf("  Always Include:    %v\n", c.AlwaysIncludeNamespaces)
+	}
 	fmt.Println()
 	fmt.Println("Authentication:")
 	fmt.Printf("  Deploy Token:      %s (upload)\n", c.DeployTokenUser)
@@ -108,6 +116,22 @@ func getDuration(key string, defaultVal time.Duration) time.Duration {
 		if d, err := time.ParseDuration(val); err == nil {
 			return d
 		}
+	}
+	return defaultVal
+}
+
+// getStringSlice parses comma-separated string from environment or returns default.
+func getStringSlice(key string, defaultVal []string) []string {
+	if val := os.Getenv(key); val != "" {
+		parts := strings.Split(val, ",")
+		var result []string
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				result = append(result, p)
+			}
+		}
+		return result
 	}
 	return defaultVal
 }

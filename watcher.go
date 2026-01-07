@@ -170,6 +170,7 @@ func computeGlobalHash(items []unstructured.Unstructured) string {
 
 // performNamespaceUploads uploads vulnerabilities grouped by namespace.
 // Only uploads namespaces where the vulnerability hash changed since last upload.
+// Always includes namespaces from cfg.AlwaysIncludeNamespaces even if they have no reports.
 func performNamespaceUploads(
 	ctx context.Context,
 	byNamespace map[string][]unstructured.Unstructured,
@@ -187,6 +188,13 @@ func performNamespaceUploads(
 	var matched []nsUpload
 	var unmatchedNames []string
 	var unmatchedVulns []Vulnerability
+
+	// Ensure always-include namespaces are in the map (with empty slice if not present)
+	for _, ns := range cfg.AlwaysIncludeNamespaces {
+		if _, exists := byNamespace[ns]; !exists {
+			byNamespace[ns] = []unstructured.Unstructured{}
+		}
+	}
 
 	for ns, items := range byNamespace {
 		vulns := convertItemsToVulnerabilities(items)
@@ -216,11 +224,6 @@ func performNamespaceUploads(
 	uploadCount := 0
 	skippedCount := 0
 	for _, m := range matched {
-		if len(m.vulns) == 0 {
-			fmt.Printf("  ○ %s: 0 vulnerabilities (skipped)\n", m.namespace)
-			continue
-		}
-
 		// Check if hash changed since last upload
 		state := tracker.GetState(m.namespace)
 		if state.LastTriggerHash == m.hash {
@@ -229,6 +232,7 @@ func performNamespaceUploads(
 			continue
 		}
 
+		// Upload even with 0 vulnerabilities - this clears the security dashboard
 		report := buildSecurityReport(m.vulns)
 		fmt.Printf("  → %s: %d vulnerabilities → %s\n", m.namespace, len(m.vulns), m.project)
 		if err := uploadAndTrigger(cfg, m.project, report); err != nil {
@@ -240,7 +244,8 @@ func performNamespaceUploads(
 	}
 
 	// Upload consolidated unmatched (only if hash changed)
-	if len(unmatchedVulns) > 0 {
+	// Also upload if there are unmatched namespaces with 0 vulns (to clear dashboards)
+	if len(unmatchedNames) > 0 {
 		consolidatedHash := computeVulnHash(unmatchedVulns)
 		consolidatedKey := "__consolidated__"
 		state := tracker.GetState(consolidatedKey)

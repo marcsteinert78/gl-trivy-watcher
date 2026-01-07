@@ -565,9 +565,70 @@ func TestPerformNamespaceUploadsEmptyVulns(t *testing.T) {
 
 	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg)
 
-	// Should skip upload for empty vulnerabilities
-	if len(mock.getUploaded()) != 0 {
-		t.Errorf("Expected 0 uploads for empty vulns, got %d", len(mock.getUploaded()))
+	// Should upload even with 0 vulnerabilities to clear the security dashboard
+	if len(mock.getUploaded()) != 1 {
+		t.Errorf("Expected 1 upload for empty vulns (to clear dashboard), got %d", len(mock.getUploaded()))
+	}
+}
+
+func TestPerformNamespaceUploadsZeroVulnsClears(t *testing.T) {
+	mock := newMockGitLabServer()
+	defer mock.close()
+
+	cache := NewProjectCache(5*time.Minute, mock.server.URL, "token")
+	cache.MarkExists("group/mediastack")
+
+	resolver := NewProjectResolver("group", "group/default", cache, nil)
+	tracker := NewNamespaceTracker()
+
+	cfg := Config{
+		GitLabAPIURL:         mock.server.URL,
+		GitLabAccessToken:    "token",
+		DeployToken:          "deploy",
+		DeployTokenUser:      "user",
+		GitLabRef:            "main",
+		GitLabDefaultProject: "group/default",
+	}
+
+	ctx := context.Background()
+
+	// First: namespace has vulnerabilities
+	byNamespaceWithVulns := map[string][]unstructured.Unstructured{
+		"mediastack": {createTestReport("mediastack", "report-1", "CVE-2021-1111")},
+	}
+	performNamespaceUploads(ctx, byNamespaceWithVulns, resolver, tracker, cfg)
+
+	if len(mock.getUploaded()) != 1 {
+		t.Fatalf("First run: expected 1 upload, got %d", len(mock.getUploaded()))
+	}
+
+	mock.reset()
+
+	// Second: vulnerabilities fixed (0 vulns)
+	byNamespaceEmpty := map[string][]unstructured.Unstructured{
+		"mediastack": {
+			{
+				Object: map[string]interface{}{
+					"metadata": map[string]interface{}{
+						"namespace": "mediastack",
+						"name":      "empty-report",
+					},
+					"report": map[string]interface{}{
+						"artifact": map[string]interface{}{
+							"repository": "nginx",
+							"tag":        "1.21",
+						},
+						"vulnerabilities": []interface{}{}, // Fixed - no vulns
+					},
+				},
+			},
+		},
+	}
+	performNamespaceUploads(ctx, byNamespaceEmpty, resolver, tracker, cfg)
+
+	// Should upload to clear the dashboard (content changed: 1 vuln -> 0 vulns)
+	if len(mock.getUploaded()) != 1 {
+		t.Errorf("Expected 1 upload to clear dashboard after fix, got %d", len(mock.getUploaded()))
 	}
 }
 
@@ -621,5 +682,155 @@ func TestPerformNamespaceUploadsMixedMatchAndDefault(t *testing.T) {
 	}
 	if !hasDefault {
 		t.Error("Expected default (consolidated) to be uploaded")
+	}
+}
+
+// ============================================================================
+// Always Include Namespaces Tests
+// ============================================================================
+
+func TestPerformNamespaceUploadsAlwaysIncludeDefault(t *testing.T) {
+	mock := newMockGitLabServer()
+	defer mock.close()
+
+	cache := NewProjectCache(5*time.Minute, mock.server.URL, "token")
+	cache.MarkExists("group/default") // default namespace has a matching project
+
+	resolver := NewProjectResolver("group", "group/fallback", cache, nil)
+	tracker := NewNamespaceTracker()
+
+	cfg := Config{
+		GitLabAPIURL:            mock.server.URL,
+		GitLabAccessToken:       "token",
+		DeployToken:             "deploy",
+		DeployTokenUser:         "user",
+		GitLabRef:               "main",
+		GitLabDefaultProject:    "group/fallback",
+		AlwaysIncludeNamespaces: []string{"default"},
+	}
+
+	ctx := context.Background()
+
+	// No VulnerabilityReports at all - but default should still be included
+	byNamespace := map[string][]unstructured.Unstructured{}
+
+	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg)
+
+	uploaded := mock.getUploaded()
+	// Should have 1 upload for default namespace (0 vulnerabilities)
+	if len(uploaded) != 1 {
+		t.Errorf("Expected 1 upload (default ns with 0 vulns), got %d: %v", len(uploaded), uploaded)
+	}
+}
+
+func TestPerformNamespaceUploadsAlwaysIncludeMultiple(t *testing.T) {
+	mock := newMockGitLabServer()
+	defer mock.close()
+
+	cache := NewProjectCache(5*time.Minute, mock.server.URL, "token")
+	cache.MarkExists("group/default")
+	cache.MarkExists("group/kube-system")
+
+	resolver := NewProjectResolver("group", "group/fallback", cache, nil)
+	tracker := NewNamespaceTracker()
+
+	cfg := Config{
+		GitLabAPIURL:            mock.server.URL,
+		GitLabAccessToken:       "token",
+		DeployToken:             "deploy",
+		DeployTokenUser:         "user",
+		GitLabRef:               "main",
+		GitLabDefaultProject:    "group/fallback",
+		AlwaysIncludeNamespaces: []string{"default", "kube-system"},
+	}
+
+	ctx := context.Background()
+
+	// Only mediastack has reports, but default and kube-system should be included
+	byNamespace := map[string][]unstructured.Unstructured{
+		"mediastack": {createTestReport("mediastack", "report-1", "CVE-2021-1111")},
+	}
+
+	// mediastack doesn't have a project, goes to fallback
+	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg)
+
+	uploaded := mock.getUploaded()
+	// Should have: default (0 vulns), kube-system (0 vulns), fallback (mediastack consolidated)
+	if len(uploaded) != 3 {
+		t.Errorf("Expected 3 uploads, got %d: %v", len(uploaded), uploaded)
+	}
+}
+
+func TestPerformNamespaceUploadsAlwaysIncludeWithExistingReport(t *testing.T) {
+	mock := newMockGitLabServer()
+	defer mock.close()
+
+	cache := NewProjectCache(5*time.Minute, mock.server.URL, "token")
+	cache.MarkExists("group/default")
+
+	resolver := NewProjectResolver("group", "group/fallback", cache, nil)
+	tracker := NewNamespaceTracker()
+
+	cfg := Config{
+		GitLabAPIURL:            mock.server.URL,
+		GitLabAccessToken:       "token",
+		DeployToken:             "deploy",
+		DeployTokenUser:         "user",
+		GitLabRef:               "main",
+		GitLabDefaultProject:    "group/fallback",
+		AlwaysIncludeNamespaces: []string{"default"},
+	}
+
+	ctx := context.Background()
+
+	// default namespace has a report - should not be duplicated
+	byNamespace := map[string][]unstructured.Unstructured{
+		"default": {createTestReport("default", "report-1", "CVE-2021-1111")},
+	}
+
+	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg)
+
+	uploaded := mock.getUploaded()
+	// Should have exactly 1 upload (default with its vuln)
+	if len(uploaded) != 1 {
+		t.Errorf("Expected 1 upload, got %d: %v", len(uploaded), uploaded)
+	}
+}
+
+func TestPerformNamespaceUploadsAlwaysIncludeUnmatchedGoesToDefault(t *testing.T) {
+	mock := newMockGitLabServer()
+	defer mock.close()
+
+	// No projects exist except fallback
+	cache := NewProjectCache(5*time.Minute, mock.server.URL, "token")
+
+	resolver := NewProjectResolver("group", "group/fallback", cache, nil)
+	tracker := NewNamespaceTracker()
+
+	cfg := Config{
+		GitLabAPIURL:            mock.server.URL,
+		GitLabAccessToken:       "token",
+		DeployToken:             "deploy",
+		DeployTokenUser:         "user",
+		GitLabRef:               "main",
+		GitLabDefaultProject:    "group/fallback",
+		AlwaysIncludeNamespaces: []string{"default"}, // default has no matching project
+	}
+
+	ctx := context.Background()
+
+	// No reports at all
+	byNamespace := map[string][]unstructured.Unstructured{}
+
+	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg)
+
+	uploaded := mock.getUploaded()
+	// default doesn't have a matching project, so it goes to consolidated (fallback)
+	// But consolidated with 0 vulns should still upload
+	if len(uploaded) != 1 {
+		t.Errorf("Expected 1 upload to fallback, got %d: %v", len(uploaded), uploaded)
+	}
+	if len(uploaded) == 1 && uploaded[0] != "group/fallback" {
+		t.Errorf("Expected upload to fallback project, got %s", uploaded[0])
 	}
 }

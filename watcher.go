@@ -240,6 +240,10 @@ func performNamespaceUploads(
 		} else {
 			tracker.MarkTriggered(m.namespace, m.hash)
 			uploadCount++
+			// Delay between uploads to avoid pipeline overload
+			if cfg.UploadDelay > 0 {
+				time.Sleep(cfg.UploadDelay)
+			}
 		}
 	}
 
@@ -260,6 +264,10 @@ func performNamespaceUploads(
 			} else {
 				tracker.MarkTriggered(consolidatedKey, consolidatedHash)
 				uploadCount++
+				// Delay after consolidated upload for consistency
+				if cfg.UploadDelay > 0 {
+					time.Sleep(cfg.UploadDelay)
+				}
 			}
 		} else {
 			fmt.Printf("  ○ consolidated (%d namespaces): %d vulnerabilities (unchanged, skipped)\n",

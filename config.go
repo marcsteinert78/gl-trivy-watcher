@@ -27,6 +27,7 @@ type Config struct {
 	StabilizeTime time.Duration
 	MinTriggerGap time.Duration
 	CacheTTL      time.Duration
+	UploadDelay   time.Duration // Delay between uploads to avoid pipeline overload
 
 	// Namespaces to always include (even without VulnerabilityReports)
 	AlwaysIncludeNamespaces []string
@@ -47,6 +48,7 @@ func LoadConfig() Config {
 		StabilizeTime:           getDuration("STABILIZE_TIME", 60*time.Second),
 		MinTriggerGap:           getDuration("MIN_TRIGGER_GAP", 5*time.Minute),
 		CacheTTL:                getDuration("CACHE_TTL", 5*time.Minute),
+		UploadDelay:             getDuration("UPLOAD_DELAY", 5*time.Second),
 		AlwaysIncludeNamespaces: getStringSlice("ALWAYS_INCLUDE_NAMESPACES", []string{"default"}),
 	}
 }
@@ -99,6 +101,7 @@ func (c Config) PrintBanner() {
 	fmt.Printf("  Stabilize Time:    %s\n", c.StabilizeTime)
 	fmt.Printf("  Min Trigger Gap:   %s\n", c.MinTriggerGap)
 	fmt.Printf("  Cache TTL:         %s\n", c.CacheTTL)
+	fmt.Printf("  Upload Delay:      %s\n", c.UploadDelay)
 	fmt.Println()
 }
 

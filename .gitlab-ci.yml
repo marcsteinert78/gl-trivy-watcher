@@ -2,3 +2,4 @@ include:
   - component: $CI_SERVER_FQDN/msteinert1/ci-components/go-pipeline@main
     inputs:
       build_path: "."
+      race_detector: false

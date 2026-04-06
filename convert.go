@@ -81,6 +81,16 @@ func convertItemsToVulnerabilities(items []unstructured.Unstructured) []Vulnerab
 		if containerName == "" {
 			containerName = "main"
 		}
+		// trivy-operator attaches reports to the actual workload (ReplicaSet,
+		// Deployment, DaemonSet, ...). Use the real kind from the label so the
+		// GitLab UI shows what was scanned instead of an incorrect "Pod".
+		resourceKind := labels["trivy-operator.resource.kind"]
+		if resourceKind == "" {
+			resourceKind = "Pod"
+		}
+		if name := labels["trivy-operator.resource.name"]; name != "" {
+			resourceName = name
+		}
 
 		artifact, _, _ := unstructured.NestedMap(report, "artifact")
 		image, _ := artifact["repository"].(string)
@@ -151,7 +161,7 @@ func convertItemsToVulnerabilities(items []unstructured.Unstructured) []Vulnerab
 					},
 					KubernetesResource: KubernetesResource{
 						Namespace:     namespace,
-						Kind:          "Pod",
+						Kind:          resourceKind,
 						Name:          resourceName,
 						ContainerName: containerName,
 					},

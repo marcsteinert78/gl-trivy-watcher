@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -14,28 +15,30 @@ import (
 )
 
 func main() {
+	// Structured logging to stderr (k8s collects both stdout and stderr).
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
+
 	cfg := LoadConfig()
 
 	if err := cfg.Validate(); err != nil {
-		fmt.Printf("ERROR: %v\n", err)
+		slog.Error("invalid configuration", "error", err)
 		os.Exit(1)
 	}
 
 	client, err := createK8sClient()
 	if err != nil {
-		fmt.Printf("ERROR: %v\n", err)
+		slog.Error("failed to create kubernetes client", "error", err)
 		os.Exit(1)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Handle shutdown signals
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		fmt.Println("\nShutting down...")
+		slog.Info("shutdown signal received")
 		cancel()
 	}()
 
@@ -47,13 +50,7 @@ func main() {
 func createK8sClient() (dynamic.Interface, error) {
 	config, err := rest.InClusterConfig()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get k8s config: %w", err)
+		return nil, fmt.Errorf("in-cluster config: %w", err)
 	}
-
-	client, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create k8s client: %w", err)
-	}
-
-	return client, nil
+	return dynamic.NewForConfig(config)
 }

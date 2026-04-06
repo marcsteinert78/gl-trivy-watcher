@@ -3,7 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 )
@@ -107,7 +107,12 @@ func getDuration(key string, defaultVal time.Duration) time.Duration {
 	}
 	d, err := time.ParseDuration(val)
 	if err != nil {
-		log.Printf("WARN: invalid duration for %s=%q (%v), using default %s", key, val, err, defaultVal)
+		slog.Warn("invalid duration env var, using default",
+			"var", key,
+			"value", val,
+			"error", err,
+			"default", defaultVal,
+		)
 		return defaultVal
 	}
 	return d

@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"os"
+	"log/slog"
 	"sort"
 	"time"
 
@@ -31,7 +31,6 @@ func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config) {
 	cache := NewProjectCache(cfg.CacheTTL, cfg.GitLabAPIURL, cacheToken)
 	resolver := NewProjectResolver(cfg.GitLabGroupPath, cfg.GitLabDefaultProject, cache, client)
 	tracker := NewNamespaceTracker()
-	progress := NewProgressDisplay(10 * time.Second)
 
 	vulnGVR := schema.GroupVersionResource{
 		Group:    "aquasecurity.github.io",
@@ -39,8 +38,11 @@ func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config) {
 		Resource: "vulnerabilityreports",
 	}
 
-	fmt.Println("Starting vulnerability monitoring...")
-	fmt.Println()
+	slog.Info("starting vulnerability monitoring",
+		"poll_interval", cfg.PollInterval,
+		"stabilize_time", cfg.StabilizeTime,
+		"min_trigger_gap", cfg.MinTriggerGap,
+	)
 
 	ticker := time.NewTicker(cfg.PollInterval)
 	defer ticker.Stop()
@@ -49,11 +51,10 @@ func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config) {
 	for {
 		select {
 		case <-ctx.Done():
-			progress.Stop()
 			return
 		case <-ticker.C:
 			pollCount++
-			processVulnerabilityReports(ctx, client, vulnGVR, resolver, tracker, progress, cfg, pollCount)
+			processVulnerabilityReports(ctx, client, vulnGVR, resolver, tracker, cfg, pollCount)
 		}
 	}
 }
@@ -65,27 +66,23 @@ func processVulnerabilityReports(
 	vulnGVR schema.GroupVersionResource,
 	resolver *ProjectResolver,
 	tracker *NamespaceTracker,
-	progress *ProgressDisplay,
 	cfg Config,
 	pollCount int,
 ) {
-	// Stop any active progress display at start of each poll
-	progress.Stop()
 	reports, err := client.Resource(vulnGVR).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error fetching reports: %v\n", err)
+		slog.Error("failed to fetch vulnerability reports", "error", err)
 		return
 	}
 
 	if len(reports.Items) == 0 {
 		// Heartbeat every 6 polls (~1 min at 10s interval)
 		if pollCount%6 == 0 {
-			fmt.Printf("[%s] No VulnerabilityReports found in cluster\n", time.Now().Format("15:04:05"))
+			slog.Info("no vulnerability reports found in cluster")
 		}
 		return
 	}
 
-	// Count total vulnerabilities across all reports
 	totalVulns := countTotalVulnerabilities(reports.Items)
 
 	// Step 1: Compute hash of ALL reports (simple: count + resource versions)
@@ -98,23 +95,25 @@ func processVulnerabilityReports(
 	changed, oldHash := tracker.UpdateHash(globalKey, globalHash)
 	if changed {
 		if oldHash == "" {
-			fmt.Printf("[%s] Initial scan: %d VulnerabilityReports, %d vulnerabilities (hash: %s)\n",
-				now.Format("15:04:05"), len(reports.Items), totalVulns, globalHash)
+			slog.Info("initial scan",
+				"reports", len(reports.Items),
+				"vulnerabilities", totalVulns,
+				"hash", globalHash,
+			)
 		} else {
-			fmt.Printf("[%s] Content changed: %d VulnerabilityReports, %d vulnerabilities (hash: %s → %s)\n",
-				now.Format("15:04:05"), len(reports.Items), totalVulns, oldHash, globalHash)
+			slog.Info("content changed",
+				"reports", len(reports.Items),
+				"vulnerabilities", totalVulns,
+				"old_hash", oldHash,
+				"new_hash", globalHash,
+			)
 		}
-		// Start progress display for stabilization
-		progress.Start("Stabilizing", now.Add(cfg.StabilizeTime))
 		return
 	}
 
 	// Step 3: Check if stable long enough
 	stableFor := now.Sub(state.StableSince)
 	if stableFor < cfg.StabilizeTime {
-		// Continue progress display during stabilization
-		endTime := state.StableSince.Add(cfg.StabilizeTime)
-		progress.Start("Stabilizing", endTime)
 		return
 	}
 
@@ -122,23 +121,25 @@ func processVulnerabilityReports(
 	if state.LastTriggerHash == globalHash {
 		// Heartbeat every 6 polls when idle
 		if pollCount%6 == 0 {
-			fmt.Printf("[%s] Watching %d VulnerabilityReports, %d vulnerabilities (no changes)\n",
-				now.Format("15:04:05"), len(reports.Items), totalVulns)
+			slog.Info("watching cluster",
+				"reports", len(reports.Items),
+				"vulnerabilities", totalVulns,
+			)
 		}
 		return
 	}
 
 	// Step 5: Check min gap between triggers
 	if !state.LastTriggerTime.IsZero() && now.Sub(state.LastTriggerTime) < cfg.MinTriggerGap {
-		// Show progress display for rate limiting
-		endTime := state.LastTriggerTime.Add(cfg.MinTriggerGap)
-		progress.Start("Rate limited", endTime)
 		return
 	}
 
 	// Step 6: Content stable - now split by namespace and upload
-	fmt.Printf("\n[%s] === Processing Uploads (stable for %s) ===\n", now.Format("15:04:05"), stableFor.Round(time.Second))
-	fmt.Printf("[%s] Total: %d VulnerabilityReports, %d vulnerabilities\n\n", now.Format("15:04:05"), len(reports.Items), totalVulns)
+	slog.Info("processing uploads",
+		"stable_for", stableFor.Round(time.Second),
+		"reports", len(reports.Items),
+		"vulnerabilities", totalVulns,
+	)
 
 	byNamespace := groupByNamespace(reports.Items)
 	scanner := extractScannerInfo(reports.Items)
@@ -146,7 +147,6 @@ func processVulnerabilityReports(
 
 	// Mark as triggered
 	tracker.MarkTriggered(globalKey, globalHash)
-	fmt.Println()
 }
 
 // countTotalVulnerabilities counts all vulnerabilities across all reports.
@@ -213,33 +213,43 @@ func performNamespaceUploads(
 		}
 	}
 
-	// Sort for consistent output
+	// Sort for deterministic processing order
 	sort.Slice(matched, func(i, j int) bool {
 		return matched[i].namespace < matched[j].namespace
 	})
 	sort.Strings(unmatchedNames)
 
-	// Upload matched namespaces (only if hash changed)
 	uploadCount := 0
 	skippedCount := 0
 	for _, m := range matched {
 		if len(m.vulns) == 0 {
-			fmt.Printf("  ○ %s: 0 vulnerabilities (skipped)\n", m.namespace)
+			slog.Info("skipped namespace (no vulnerabilities)", "namespace", m.namespace)
 			continue
 		}
 
 		// Check if hash changed since last upload
 		state := tracker.GetState(m.namespace)
 		if state.LastTriggerHash == m.hash {
-			fmt.Printf("  ○ %s: %d vulnerabilities (unchanged, skipped)\n", m.namespace, len(m.vulns))
+			slog.Info("skipped namespace (unchanged)",
+				"namespace", m.namespace,
+				"vulnerabilities", len(m.vulns),
+			)
 			skippedCount++
 			continue
 		}
 
 		report := buildSecurityReport(m.vulns, scanner)
-		fmt.Printf("  → %s: %d vulnerabilities → %s\n", m.namespace, len(m.vulns), m.project)
+		slog.Info("uploading namespace report",
+			"namespace", m.namespace,
+			"vulnerabilities", len(m.vulns),
+			"project", m.project,
+		)
 		if err := uploadAndTrigger(cfg, m.project, report); err != nil {
-			fmt.Fprintf(os.Stderr, "    ERROR: %v\n", err)
+			slog.Error("upload failed",
+				"namespace", m.namespace,
+				"project", m.project,
+				"error", err,
+			)
 		} else {
 			tracker.MarkTriggered(m.namespace, m.hash)
 			uploadCount++
@@ -253,25 +263,28 @@ func performNamespaceUploads(
 
 		if state.LastTriggerHash != consolidatedHash {
 			report := buildSecurityReport(unmatchedVulns, scanner)
-			fmt.Printf("  → consolidated (%d namespaces): %d vulnerabilities → %s\n",
-				len(unmatchedNames), len(unmatchedVulns), cfg.GitLabDefaultProject)
-			fmt.Printf("    Namespaces: %v\n", unmatchedNames)
+			slog.Info("uploading consolidated report",
+				"namespaces", unmatchedNames,
+				"vulnerabilities", len(unmatchedVulns),
+				"project", cfg.GitLabDefaultProject,
+			)
 			if err := uploadAndTrigger(cfg, cfg.GitLabDefaultProject, report); err != nil {
-				fmt.Fprintf(os.Stderr, "    ERROR: %v\n", err)
+				slog.Error("consolidated upload failed",
+					"project", cfg.GitLabDefaultProject,
+					"error", err,
+				)
 			} else {
 				tracker.MarkTriggered(consolidatedKey, consolidatedHash)
 				uploadCount++
 			}
 		} else {
-			fmt.Printf("  ○ consolidated (%d namespaces): %d vulnerabilities (unchanged, skipped)\n",
-				len(unmatchedNames), len(unmatchedVulns))
+			slog.Info("skipped consolidated (unchanged)",
+				"namespaces", len(unmatchedNames),
+				"vulnerabilities", len(unmatchedVulns),
+			)
 			skippedCount++
 		}
 	}
 
-	if skippedCount > 0 {
-		fmt.Printf("\nUploads complete: %d updated, %d unchanged (skipped)\n", uploadCount, skippedCount)
-	} else {
-		fmt.Printf("\nUploads complete: %d projects updated\n", uploadCount)
-	}
+	slog.Info("uploads complete", "updated", uploadCount, "skipped", skippedCount)
 }

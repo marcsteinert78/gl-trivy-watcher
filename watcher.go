@@ -242,6 +242,7 @@ func performNamespaceUploads(
 		slog.Info("uploading namespace report",
 			"namespace", m.namespace,
 			"vulnerabilities", len(m.vulns),
+			"unique_cves", countUniqueCVEs(m.vulns),
 			"project", m.project,
 		)
 		if err := uploadAndTrigger(cfg, m.project, report); err != nil {
@@ -266,6 +267,7 @@ func performNamespaceUploads(
 			slog.Info("uploading consolidated report",
 				"namespaces", unmatchedNames,
 				"vulnerabilities", len(unmatchedVulns),
+				"unique_cves", countUniqueCVEs(unmatchedVulns),
 				"project", cfg.GitLabDefaultProject,
 			)
 			if err := uploadAndTrigger(cfg, cfg.GitLabDefaultProject, report); err != nil {

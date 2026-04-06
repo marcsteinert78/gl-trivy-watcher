@@ -22,7 +22,7 @@ const (
 )
 
 // runWatcher starts the main vulnerability monitoring loop.
-func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config) {
+func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config, health *Health) {
 	// DeployToken only has write_package_registry, can't read projects
 	cacheToken := cfg.GitLabAccessToken
 	if cacheToken == "" {
@@ -54,7 +54,11 @@ func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config) {
 			return
 		case <-ticker.C:
 			pollCount++
-			processVulnerabilityReports(ctx, client, vulnGVR, resolver, tracker, cfg, pollCount)
+			if processVulnerabilityReports(ctx, client, vulnGVR, resolver, tracker, cfg, pollCount) {
+				if health != nil {
+					health.MarkPoll()
+				}
+			}
 		}
 	}
 }
@@ -68,11 +72,11 @@ func processVulnerabilityReports(
 	tracker *NamespaceTracker,
 	cfg Config,
 	pollCount int,
-) {
+) bool {
 	reports, err := client.Resource(vulnGVR).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		slog.Error("failed to fetch vulnerability reports", "error", err)
-		return
+		return false
 	}
 
 	if len(reports.Items) == 0 {
@@ -80,7 +84,7 @@ func processVulnerabilityReports(
 		if pollCount%6 == 0 {
 			slog.Info("no vulnerability reports found in cluster")
 		}
-		return
+		return true
 	}
 
 	totalVulns := countTotalVulnerabilities(reports.Items)
@@ -108,13 +112,13 @@ func processVulnerabilityReports(
 				"new_hash", globalHash,
 			)
 		}
-		return
+		return true
 	}
 
 	// Step 3: Check if stable long enough
 	stableFor := now.Sub(state.StableSince)
 	if stableFor < cfg.StabilizeTime {
-		return
+		return true
 	}
 
 	// Step 4: Check if already triggered for this hash
@@ -126,12 +130,12 @@ func processVulnerabilityReports(
 				"vulnerabilities", totalVulns,
 			)
 		}
-		return
+		return true
 	}
 
 	// Step 5: Check min gap between triggers
 	if !state.LastTriggerTime.IsZero() && now.Sub(state.LastTriggerTime) < cfg.MinTriggerGap {
-		return
+		return true
 	}
 
 	// Step 6: Content stable - now split by namespace and upload
@@ -154,6 +158,7 @@ func processVulnerabilityReports(
 	} else {
 		tracker.MarkAttempted(globalKey)
 	}
+	return true
 }
 
 // countTotalVulnerabilities counts all vulnerabilities across all reports.

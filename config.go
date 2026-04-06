@@ -26,6 +26,9 @@ type Config struct {
 	StabilizeTime time.Duration
 	MinTriggerGap time.Duration
 	CacheTTL      time.Duration
+
+	// HealthAddr is the listen address for the /healthz endpoint.
+	HealthAddr string
 }
 
 // LoadConfig reads configuration from environment variables.
@@ -42,6 +45,7 @@ func LoadConfig() Config {
 		StabilizeTime:        getDuration("STABILIZE_TIME", 60*time.Second),
 		MinTriggerGap:        getDuration("MIN_TRIGGER_GAP", 5*time.Minute),
 		CacheTTL:             getDuration("CACHE_TTL", 5*time.Minute),
+		HealthAddr:           getEnv("HEALTH_ADDR", ":8080"),
 	}
 }
 
@@ -86,6 +90,9 @@ func (c Config) PrintBanner() {
 	fmt.Printf("  Stabilize Time:    %s\n", c.StabilizeTime)
 	fmt.Printf("  Min Trigger Gap:   %s\n", c.MinTriggerGap)
 	fmt.Printf("  Cache TTL:         %s\n", c.CacheTTL)
+	fmt.Println()
+	fmt.Println("Health:")
+	fmt.Printf("  Listen Addr:       %s (/healthz)\n", c.HealthAddr)
 	fmt.Println()
 }
 

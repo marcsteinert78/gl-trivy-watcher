@@ -38,6 +38,7 @@ Trivy Operator -> VulnerabilityReport CRs -> Trivy Watcher -> GitLab Package Reg
 | `STABILIZE_TIME` | `60s` | Wait time after last change |
 | `MIN_TRIGGER_GAP` | `5m` | Minimum time between triggers |
 | `CACHE_TTL` | `5m` | Project-existence cache TTL |
+| `HEALTH_ADDR` | `:8080` | Listen address for `/healthz` liveness probe |
 
 ## Token Setup (Minimal Permissions)
 

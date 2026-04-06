@@ -92,3 +92,13 @@ go build -o trivy-watcher .
 
 Built automatically on main branch:
 `registry.gitlab.com/msteinert1/homeserver/tools/trivy-watcher:latest`
+
+## Development
+
+This project was built with the assistance of Claude Code (Anthropic).
+All code is human-reviewed, tested, and integrated; commits use the
+`Co-Authored-By` trailer to attribute AI involvement.
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE).

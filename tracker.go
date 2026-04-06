@@ -69,3 +69,16 @@ func (t *NamespaceTracker) MarkTriggered(namespace, hash string) {
 		state.LastTriggerTime = time.Now()
 	}
 }
+
+// MarkAttempted records that an upload attempt was made without committing
+// to a hash. Used after partial failures so the rate-limit (MinTriggerGap)
+// still applies and the watcher doesn't hammer GitLab on a persistent error,
+// while leaving LastTriggerHash untouched so the next cycle still retries.
+func (t *NamespaceTracker) MarkAttempted(namespace string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if state, ok := t.states[namespace]; ok {
+		state.LastTriggerTime = time.Now()
+	}
+}

@@ -143,10 +143,17 @@ func processVulnerabilityReports(
 
 	byNamespace := groupByNamespace(reports.Items)
 	scanner := extractScannerInfo(reports.Items)
-	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg, scanner)
+	allOK := performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg, scanner)
 
-	// Mark as triggered
-	tracker.MarkTriggered(globalKey, globalHash)
+	// Only mark the global hash as triggered if every namespace succeeded.
+	// Otherwise we'd skip the entire next poll cycle and never retry the
+	// failed namespaces until cluster content changes again. MarkAttempted
+	// still updates LastTriggerTime so MinTriggerGap rate-limits retries.
+	if allOK {
+		tracker.MarkTriggered(globalKey, globalHash)
+	} else {
+		tracker.MarkAttempted(globalKey)
+	}
 }
 
 // countTotalVulnerabilities counts all vulnerabilities across all reports.
@@ -175,7 +182,8 @@ func computeGlobalHash(items []unstructured.Unstructured) string {
 }
 
 // performNamespaceUploads uploads vulnerabilities grouped by namespace.
-// Only uploads namespaces where the vulnerability hash changed since last upload.
+// Only uploads namespaces where the vulnerability hash changed since last
+// upload. Returns true if every attempted upload succeeded.
 func performNamespaceUploads(
 	ctx context.Context,
 	byNamespace map[string][]unstructured.Unstructured,
@@ -183,7 +191,7 @@ func performNamespaceUploads(
 	tracker *NamespaceTracker,
 	cfg Config,
 	scanner scannerInfo,
-) {
+) bool {
 	type nsUpload struct {
 		namespace string
 		project   string
@@ -221,6 +229,7 @@ func performNamespaceUploads(
 
 	uploadCount := 0
 	skippedCount := 0
+	failedCount := 0
 	for _, m := range matched {
 		if len(m.vulns) == 0 {
 			slog.Info("skipped namespace (no vulnerabilities)", "namespace", m.namespace)
@@ -251,6 +260,7 @@ func performNamespaceUploads(
 				"project", m.project,
 				"error", err,
 			)
+			failedCount++
 		} else {
 			tracker.MarkTriggered(m.namespace, m.hash)
 			uploadCount++
@@ -275,6 +285,7 @@ func performNamespaceUploads(
 					"project", cfg.GitLabDefaultProject,
 					"error", err,
 				)
+				failedCount++
 			} else {
 				tracker.MarkTriggered(consolidatedKey, consolidatedHash)
 				uploadCount++
@@ -288,5 +299,10 @@ func performNamespaceUploads(
 		}
 	}
 
-	slog.Info("uploads complete", "updated", uploadCount, "skipped", skippedCount)
+	slog.Info("uploads complete",
+		"updated", uploadCount,
+		"skipped", skippedCount,
+		"failed", failedCount,
+	)
+	return failedCount == 0
 }

@@ -1078,6 +1078,76 @@ func TestBuildSecurityReport(t *testing.T) {
 	if report.Scan.StartAt == "" {
 		t.Error("StartAt should not be empty")
 	}
+
+	// Defaults kick in for empty scannerInfo
+	if report.Scan.Scanner.Name != "Trivy" {
+		t.Errorf("default Scanner.Name = %q, want 'Trivy'", report.Scan.Scanner.Name)
+	}
+	if report.Scan.Scanner.Version != scannerVersionUnknown {
+		t.Errorf("default Scanner.Version = %q, want %q", report.Scan.Scanner.Version, scannerVersionUnknown)
+	}
+	if report.Scan.Analyzer.Vendor.Name != "Aqua Security" {
+		t.Errorf("default Analyzer.Vendor = %q, want 'Aqua Security'", report.Scan.Analyzer.Vendor.Name)
+	}
+}
+
+func TestBuildSecurityReportWithScanner(t *testing.T) {
+	vulns := []Vulnerability{{ID: "test-1", Name: "CVE-1", Severity: "High"}}
+	scanner := scannerInfo{Name: "Trivy", Version: "0.69.1", Vendor: "Aqua Security"}
+
+	report := buildSecurityReport(vulns, scanner)
+
+	if report.Scan.Scanner.Version != "0.69.1" {
+		t.Errorf("Scanner.Version = %q, want '0.69.1'", report.Scan.Scanner.Version)
+	}
+	if report.Scan.Analyzer.Version != "0.69.1" {
+		t.Errorf("Analyzer.Version = %q, want '0.69.1'", report.Scan.Analyzer.Version)
+	}
+	if report.Scan.Scanner.Name != "Trivy" {
+		t.Errorf("Scanner.Name = %q, want 'Trivy'", report.Scan.Scanner.Name)
+	}
+	if report.Scan.Scanner.Vendor.Name != "Aqua Security" {
+		t.Errorf("Scanner.Vendor = %q", report.Scan.Scanner.Vendor.Name)
+	}
+}
+
+func TestExtractScannerInfo(t *testing.T) {
+	mkReport := func(scanner map[string]interface{}) unstructured.Unstructured {
+		obj := map[string]interface{}{"report": map[string]interface{}{}}
+		if scanner != nil {
+			obj["report"].(map[string]interface{})["scanner"] = scanner
+		}
+		return unstructured.Unstructured{Object: obj}
+	}
+
+	t.Run("with scanner block", func(t *testing.T) {
+		items := []unstructured.Unstructured{
+			mkReport(map[string]interface{}{"name": "Trivy", "version": "0.69.1", "vendor": "Aqua Security"}),
+		}
+		got := extractScannerInfo(items)
+		if got.Name != "Trivy" || got.Version != "0.69.1" || got.Vendor != "Aqua Security" {
+			t.Errorf("got %+v", got)
+		}
+	})
+
+	t.Run("without scanner block", func(t *testing.T) {
+		items := []unstructured.Unstructured{mkReport(nil)}
+		got := extractScannerInfo(items)
+		if got != (scannerInfo{}) {
+			t.Errorf("expected empty, got %+v", got)
+		}
+	})
+
+	t.Run("first empty then populated", func(t *testing.T) {
+		items := []unstructured.Unstructured{
+			mkReport(nil),
+			mkReport(map[string]interface{}{"name": "Trivy", "version": "0.70.0"}),
+		}
+		got := extractScannerInfo(items)
+		if got.Version != "0.70.0" {
+			t.Errorf("got %+v", got)
+		}
+	})
 }
 
 // ============================================================================

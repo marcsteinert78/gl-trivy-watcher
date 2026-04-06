@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"time"
@@ -66,34 +65,27 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// PrintBanner outputs the startup configuration.
-func (c Config) PrintBanner() {
-	fmt.Println("=== Trivy Vulnerability Watcher ===")
-	fmt.Println()
-	fmt.Println("Configuration:")
-	fmt.Printf("  GitLab API:        %s\n", c.GitLabAPIURL)
+// LogStartup logs the effective configuration as a structured slog record.
+// Keeping startup output on the same stream as the rest of the logs makes
+// log aggregation in k8s simpler and avoids interleaving stdout/stderr.
+func (c Config) LogStartup() {
+	resolution := "namespace annotation → default"
 	if c.GitLabGroupPath != "" {
-		fmt.Printf("  Group Path:        %s\n", c.GitLabGroupPath)
-		fmt.Println("  Resolution:        namespace annotation → group/namespace → default")
-	} else {
-		fmt.Println("  Resolution:        namespace annotation → default")
+		resolution = "namespace annotation → group/namespace → default"
 	}
-	fmt.Printf("  Default Project:   %s\n", c.GitLabDefaultProject)
-	fmt.Printf("  Git Ref:           %s\n", c.GitLabRef)
-	fmt.Println()
-	fmt.Println("Authentication:")
-	fmt.Printf("  Deploy Token:      %s (upload)\n", c.DeployTokenUser)
-	fmt.Println("  Pipeline Trigger:  Access Token (multi-project)")
-	fmt.Println()
-	fmt.Println("Timing:")
-	fmt.Printf("  Poll Interval:     %s\n", c.PollInterval)
-	fmt.Printf("  Stabilize Time:    %s\n", c.StabilizeTime)
-	fmt.Printf("  Min Trigger Gap:   %s\n", c.MinTriggerGap)
-	fmt.Printf("  Cache TTL:         %s\n", c.CacheTTL)
-	fmt.Println()
-	fmt.Println("Health:")
-	fmt.Printf("  Listen Addr:       %s (/healthz)\n", c.HealthAddr)
-	fmt.Println()
+	slog.Info("trivy-watcher starting",
+		"gitlab_api", c.GitLabAPIURL,
+		"group_path", c.GitLabGroupPath,
+		"default_project", c.GitLabDefaultProject,
+		"git_ref", c.GitLabRef,
+		"resolution", resolution,
+		"deploy_token_user", c.DeployTokenUser,
+		"poll_interval", c.PollInterval,
+		"stabilize_time", c.StabilizeTime,
+		"min_trigger_gap", c.MinTriggerGap,
+		"cache_ttl", c.CacheTTL,
+		"health_addr", c.HealthAddr,
+	)
 }
 
 // getEnv returns environment variable or default value.

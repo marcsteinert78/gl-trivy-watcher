@@ -43,7 +43,7 @@ func main() {
 		cancel()
 	}()
 
-	cfg.PrintBanner()
+	cfg.LogStartup()
 
 	// Liveness threshold: 3x poll interval, with a 30s floor so very short
 	// intervals don't make the probe flap on transient slow API calls.

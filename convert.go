@@ -195,7 +195,8 @@ const scannerVersionUnknown = "unknown"
 func buildSecurityReport(vulns []Vulnerability, scanner scannerInfo) SecurityReport {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05")
 
-	// Schema requires vulnerabilities to be an array, never null.
+	// json.Marshal encodes a nil slice as "null", but the GitLab schema
+	// requires "vulnerabilities" to always be an array. Force an empty slice.
 	if vulns == nil {
 		vulns = []Vulnerability{}
 	}
@@ -231,8 +232,8 @@ func buildSecurityReport(vulns []Vulnerability, scanner scannerInfo) SecurityRep
 			},
 			Type:    "container_scanning",
 			Status:  "success",
-			StartAt: now,
-			EndAt:   now,
+			StartTime: now,
+			EndTime:   now,
 		},
 	}
 }

@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 )
 
 // Generic Package Registry coordinates for the uploaded report. We always
@@ -84,8 +83,23 @@ func triggerPipeline(cfg Config, project string) error {
 	pipelineURL := fmt.Sprintf("%s/projects/%s/pipeline",
 		cfg.GitLabAPIURL, url.PathEscape(project))
 
-	body := fmt.Sprintf(`{"ref":"%s","variables":[{"key":"%s","value":"true"}]}`, cfg.GitLabRef, triggerVariable)
-	req, err := http.NewRequest("POST", pipelineURL, strings.NewReader(body))
+	type pipelineVar struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}
+	type pipelineRequest struct {
+		Ref       string        `json:"ref"`
+		Variables []pipelineVar `json:"variables"`
+	}
+	body, err := json.Marshal(pipelineRequest{
+		Ref:       cfg.GitLabRef,
+		Variables: []pipelineVar{{Key: triggerVariable, Value: "true"}},
+	})
+	if err != nil {
+		return fmt.Errorf("marshal pipeline request: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", pipelineURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}

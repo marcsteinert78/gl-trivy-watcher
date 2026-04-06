@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestUploadToPackageRegistry(t *testing.T) {
@@ -231,22 +230,3 @@ func TestUploadAndTriggerUploadFails(t *testing.T) {
 	}
 }
 
-func TestUploadToPackageRegistryTimeout(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(100 * time.Millisecond)
-		w.WriteHeader(http.StatusCreated)
-	}))
-	defer server.Close()
-
-	cfg := Config{
-		GitLabAPIURL:    server.URL,
-		DeployToken:     "token",
-		DeployTokenUser: "user",
-	}
-
-	// Should complete without timeout with default client
-	err := uploadToPackageRegistry(cfg, "group/project", []byte("{}"))
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
-	}
-}

@@ -60,7 +60,7 @@ func TestProjectResolverFindsViaConvention(t *testing.T) {
 	defer server.Close()
 
 	cache := NewProjectCache(5*time.Minute, server.URL, "token")
-	resolver := NewProjectResolver("msteinert1/homeserver", "default/project", cache, nil)
+	resolver := NewProjectResolver("msteinert1/homeserver", "default/project", cache, nil, 5*time.Minute)
 
 	ctx := context.Background()
 	project, isDefault := resolver.Resolve(ctx, "mediastack")
@@ -80,7 +80,7 @@ func TestProjectResolverFallbackToDefault(t *testing.T) {
 	defer server.Close()
 
 	cache := NewProjectCache(5*time.Minute, server.URL, "token")
-	resolver := NewProjectResolver("msteinert1/homeserver", "default/fallback", cache, nil)
+	resolver := NewProjectResolver("msteinert1/homeserver", "default/fallback", cache, nil, 5*time.Minute)
 
 	ctx := context.Background()
 	project, isDefault := resolver.Resolve(ctx, "unknown-namespace")
@@ -102,7 +102,7 @@ func TestProjectResolverCachesAPIResult(t *testing.T) {
 	defer server.Close()
 
 	cache := NewProjectCache(5*time.Minute, server.URL, "token")
-	resolver := NewProjectResolver("group", "default/project", cache, nil)
+	resolver := NewProjectResolver("group", "default/project", cache, nil, 5*time.Minute)
 
 	ctx := context.Background()
 
@@ -124,7 +124,7 @@ func TestProjectResolverEmptyGroupPath(t *testing.T) {
 	defer server.Close()
 
 	cache := NewProjectCache(time.Minute, server.URL, "token")
-	resolver := NewProjectResolver("", "default/project", cache, nil)
+	resolver := NewProjectResolver("", "default/project", cache, nil, 5*time.Minute)
 
 	ctx := context.Background()
 	project, isDefault := resolver.Resolve(ctx, "test-ns")
@@ -145,9 +145,9 @@ func TestProjectResolverDefaultProjectMarkedInCache(t *testing.T) {
 	defer server.Close()
 
 	cache := NewProjectCache(time.Minute, server.URL, "token")
-	_ = NewProjectResolver("group", "group/default", cache, nil)
+	_ = NewProjectResolver("group", "group/default", cache, nil, 5*time.Minute)
 
-	if !cache.Exists("group/default") {
+	if !cache.Exists(context.Background(), "group/default") {
 		t.Error("Default project should be pre-marked as existing")
 	}
 }
@@ -159,7 +159,7 @@ func TestProjectResolverNilClientSkipsAnnotation(t *testing.T) {
 	defer server.Close()
 
 	cache := NewProjectCache(time.Minute, server.URL, "token")
-	resolver := NewProjectResolver("group", "group/default", cache, nil)
+	resolver := NewProjectResolver("group", "group/default", cache, nil, 5*time.Minute)
 
 	ctx := context.Background()
 	project, isDefault := resolver.Resolve(ctx, "test")
@@ -174,7 +174,7 @@ func TestProjectResolverNilClientSkipsAnnotation(t *testing.T) {
 
 func TestNewProjectResolver(t *testing.T) {
 	cache := NewProjectCache(time.Minute, "https://gitlab.com", "token")
-	resolver := NewProjectResolver("group/subgroup", "group/default", cache, nil)
+	resolver := NewProjectResolver("group/subgroup", "group/default", cache, nil, 5*time.Minute)
 
 	if resolver == nil {
 		t.Fatal("NewProjectResolver returned nil")
@@ -202,10 +202,10 @@ func TestProjectCacheCheckViaAPI(t *testing.T) {
 
 	cache := NewProjectCache(time.Minute, server.URL, "test-token")
 
-	if !cache.Exists("existing") {
+	if !cache.Exists(context.Background(), "existing") {
 		t.Error("Existing project should return true")
 	}
-	if cache.Exists("nonexistent") {
+	if cache.Exists(context.Background(), "nonexistent") {
 		t.Error("Nonexistent project should return false")
 	}
 }
@@ -220,19 +220,19 @@ func TestProjectCacheExpiration(t *testing.T) {
 
 	cache := NewProjectCache(10*time.Millisecond, server.URL, "token")
 
-	cache.Exists("project")
+	cache.Exists(context.Background(), "project")
 	if callCount != 1 {
 		t.Errorf("First call: expected 1 API call, got %d", callCount)
 	}
 
-	cache.Exists("project")
+	cache.Exists(context.Background(), "project")
 	if callCount != 1 {
 		t.Errorf("Second call: expected cache hit, got %d API calls", callCount)
 	}
 
 	time.Sleep(15 * time.Millisecond)
 
-	cache.Exists("project")
+	cache.Exists(context.Background(), "project")
 	if callCount != 2 {
 		t.Errorf("After TTL: expected 2 API calls, got %d", callCount)
 	}
@@ -242,7 +242,7 @@ func TestProjectCacheMarkExists(t *testing.T) {
 	cache := NewProjectCache(time.Minute, "http://unused", "token")
 	cache.MarkExists("my/project")
 
-	if !cache.Exists("my/project") {
+	if !cache.Exists(context.Background(), "my/project") {
 		t.Error("MarkExists should make Exists return true")
 	}
 }
@@ -251,7 +251,7 @@ func TestProjectResolverAnnotationCacheHit(t *testing.T) {
 	client, fakeAccumulator := newFakeDynamicWithNamespace("annotated-ns", "explicit/project")
 
 	cache := NewProjectCache(time.Minute, "http://unused", "token")
-	resolver := NewProjectResolver("group", "default/project", cache, client)
+	resolver := NewProjectResolver("group", "default/project", cache, client, 5*time.Minute)
 
 	ctx := context.Background()
 
@@ -281,7 +281,7 @@ func TestProjectResolverAnnotationCacheNegativeHit(t *testing.T) {
 	defer server.Close()
 
 	cache := NewProjectCache(time.Minute, server.URL, "token")
-	resolver := NewProjectResolver("group", "default/project", cache, client)
+	resolver := NewProjectResolver("group", "default/project", cache, client, 5*time.Minute)
 
 	ctx := context.Background()
 	for i := 0; i < 3; i++ {
@@ -300,7 +300,7 @@ func TestProjectResolverAnnotationCacheExpiry(t *testing.T) {
 	client, fakeAccumulator := newFakeDynamicWithNamespace("annotated-ns", "explicit/project")
 
 	cache := NewProjectCache(time.Minute, "http://unused", "token")
-	resolver := NewProjectResolver("group", "default/project", cache, client)
+	resolver := NewProjectResolver("group", "default/project", cache, client, 5*time.Minute)
 	resolver.annotationTTL = 10 * time.Millisecond
 
 	ctx := context.Background()
@@ -329,7 +329,7 @@ func TestProjectCacheConcurrent(t *testing.T) {
 	done := make(chan bool, 100)
 	for i := 0; i < 100; i++ {
 		go func() {
-			cache.Exists("project")
+			cache.Exists(context.Background(), "project")
 			cache.MarkExists("another")
 			done <- true
 		}()

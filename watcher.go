@@ -29,7 +29,7 @@ func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config, healt
 		cacheToken = cfg.DeployToken // Fallback, but project checks will fail
 	}
 	cache := NewProjectCache(cfg.CacheTTL, cfg.GitLabAPIURL, cacheToken)
-	resolver := NewProjectResolver(cfg.GitLabGroupPath, cfg.GitLabDefaultProject, cache, client)
+	resolver := NewProjectResolver(cfg.GitLabGroupPath, cfg.GitLabDefaultProject, cache, client, cfg.CacheTTL)
 	tracker := NewNamespaceTracker()
 
 	vulnGVR := schema.GroupVersionResource{

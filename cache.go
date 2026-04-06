@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -29,8 +30,10 @@ func NewProjectCache(ttl time.Duration, apiURL, token string) *ProjectCache {
 	}
 }
 
-// Exists checks if a GitLab project exists (cached).
-func (c *ProjectCache) Exists(projectPath string) bool {
+// Exists checks if a GitLab project exists (cached). The context bounds the
+// underlying HTTP call so a watcher shutdown doesn't get stuck waiting on
+// GitLab.
+func (c *ProjectCache) Exists(ctx context.Context, projectPath string) bool {
 	c.mu.RLock()
 	if checkedAt, ok := c.checked[projectPath]; ok {
 		if time.Since(checkedAt) < c.ttl {
@@ -42,7 +45,7 @@ func (c *ProjectCache) Exists(projectPath string) bool {
 	c.mu.RUnlock()
 
 	// Cache miss or expired - check via API
-	exists := c.checkViaAPI(projectPath)
+	exists := c.checkViaAPI(ctx, projectPath)
 
 	c.mu.Lock()
 	c.exists[projectPath] = exists
@@ -53,10 +56,10 @@ func (c *ProjectCache) Exists(projectPath string) bool {
 }
 
 // checkViaAPI queries GitLab to check if project exists.
-func (c *ProjectCache) checkViaAPI(projectPath string) bool {
+func (c *ProjectCache) checkViaAPI(ctx context.Context, projectPath string) bool {
 	checkURL := fmt.Sprintf("%s/projects/%s", c.apiURL, url.PathEscape(projectPath))
 
-	req, err := http.NewRequest("GET", checkURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", checkURL, nil)
 	if err != nil {
 		return false
 	}

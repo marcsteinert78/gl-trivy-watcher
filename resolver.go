@@ -13,11 +13,6 @@ import (
 
 const annotationGitLabProject = "trivy-watcher.io/gitlab-project"
 
-// annotationCacheTTL controls how long namespace annotation lookups are
-// memoized. The same value as the project-existence cache keeps both layers
-// in sync without exposing yet another knob.
-const annotationCacheTTL = 5 * time.Minute
-
 // annotationEntry is a single cached annotation lookup. value=="" means the
 // namespace exists but has no project annotation — we still cache that to
 // avoid re-querying the apiserver every poll cycle.
@@ -41,8 +36,10 @@ type ProjectResolver struct {
 	annotationTTL  time.Duration
 }
 
-// NewProjectResolver creates a new resolver.
-func NewProjectResolver(groupPath, defaultProject string, cache *ProjectCache, client dynamic.Interface) *ProjectResolver {
+// NewProjectResolver creates a new resolver. annotationTTL controls how long
+// namespace annotation lookups are memoized — pass cfg.CacheTTL to keep both
+// caching layers in sync.
+func NewProjectResolver(groupPath, defaultProject string, cache *ProjectCache, client dynamic.Interface, annotationTTL time.Duration) *ProjectResolver {
 	// Mark default project as existing (skip API check)
 	cache.MarkExists(defaultProject)
 
@@ -52,7 +49,7 @@ func NewProjectResolver(groupPath, defaultProject string, cache *ProjectCache, c
 		cache:          cache,
 		client:         client,
 		annotations:    make(map[string]annotationEntry),
-		annotationTTL:  annotationCacheTTL,
+		annotationTTL:  annotationTTL,
 	}
 }
 
@@ -67,7 +64,7 @@ func (r *ProjectResolver) Resolve(ctx context.Context, namespace string) (string
 	// 2. Try naming convention: {group}/{namespace}
 	if r.groupPath != "" {
 		conventionPath := fmt.Sprintf("%s/%s", r.groupPath, namespace)
-		if r.cache.Exists(conventionPath) {
+		if r.cache.Exists(ctx, conventionPath) {
 			return conventionPath, false // Found via convention, NOT default
 		}
 	}

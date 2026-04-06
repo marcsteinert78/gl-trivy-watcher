@@ -281,7 +281,7 @@ func TestPerformNamespaceUploadsFirstRun(t *testing.T) {
 	cache.MarkExists("group/mediastack")
 	cache.MarkExists("group/gitlab")
 
-	resolver := NewProjectResolver("group", "group/default", cache, nil)
+	resolver := NewProjectResolver("group", "group/default", cache, nil, 5*time.Minute)
 	tracker := NewNamespaceTracker()
 
 	cfg := Config{
@@ -320,7 +320,7 @@ func TestPerformNamespaceUploadsSkipsUnchanged(t *testing.T) {
 	cache := NewProjectCache(5*time.Minute, mock.server.URL, "token")
 	cache.MarkExists("group/mediastack")
 
-	resolver := NewProjectResolver("group", "group/default", cache, nil)
+	resolver := NewProjectResolver("group", "group/default", cache, nil, 5*time.Minute)
 	tracker := NewNamespaceTracker()
 
 	cfg := Config{
@@ -362,7 +362,7 @@ func TestPerformNamespaceUploadsDetectsChange(t *testing.T) {
 	cache := NewProjectCache(5*time.Minute, mock.server.URL, "token")
 	cache.MarkExists("group/mediastack")
 
-	resolver := NewProjectResolver("group", "group/default", cache, nil)
+	resolver := NewProjectResolver("group", "group/default", cache, nil, 5*time.Minute)
 	tracker := NewNamespaceTracker()
 
 	cfg := Config{
@@ -403,7 +403,7 @@ func TestPerformNamespaceUploadsPartialChange(t *testing.T) {
 	cache.MarkExists("group/mediastack")
 	cache.MarkExists("group/gitlab")
 
-	resolver := NewProjectResolver("group", "group/default", cache, nil)
+	resolver := NewProjectResolver("group", "group/default", cache, nil, 5*time.Minute)
 	tracker := NewNamespaceTracker()
 
 	cfg := Config{
@@ -452,7 +452,7 @@ func TestPerformNamespaceUploadsConsolidated(t *testing.T) {
 
 	// Only mark default project as existing (nothing else matches)
 	cache := NewProjectCache(5*time.Minute, mock.server.URL, "token")
-	resolver := NewProjectResolver("group", "group/default", cache, nil)
+	resolver := NewProjectResolver("group", "group/default", cache, nil, 5*time.Minute)
 	tracker := NewNamespaceTracker()
 
 	cfg := Config{
@@ -488,7 +488,7 @@ func TestPerformNamespaceUploadsConsolidatedSkipsUnchanged(t *testing.T) {
 	defer mock.close()
 
 	cache := NewProjectCache(5*time.Minute, mock.server.URL, "token")
-	resolver := NewProjectResolver("group", "group/default", cache, nil)
+	resolver := NewProjectResolver("group", "group/default", cache, nil, 5*time.Minute)
 	tracker := NewNamespaceTracker()
 
 	cfg := Config{
@@ -528,7 +528,7 @@ func TestPerformNamespaceUploadsEmptyVulns(t *testing.T) {
 	cache := NewProjectCache(5*time.Minute, mock.server.URL, "token")
 	cache.MarkExists("group/mediastack")
 
-	resolver := NewProjectResolver("group", "group/default", cache, nil)
+	resolver := NewProjectResolver("group", "group/default", cache, nil, 5*time.Minute)
 	tracker := NewNamespaceTracker()
 
 	cfg := Config{
@@ -578,7 +578,7 @@ func TestPerformNamespaceUploadsMixedMatchAndDefault(t *testing.T) {
 	cache := NewProjectCache(5*time.Minute, mock.server.URL, "token")
 	cache.MarkExists("group/mediastack") // Only mediastack exists
 
-	resolver := NewProjectResolver("group", "group/default", cache, nil)
+	resolver := NewProjectResolver("group", "group/default", cache, nil, 5*time.Minute)
 	tracker := NewNamespaceTracker()
 
 	cfg := Config{

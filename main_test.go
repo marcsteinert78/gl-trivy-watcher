@@ -746,8 +746,8 @@ func TestSecurityReportJSON(t *testing.T) {
 			},
 			Type:    "container_scanning",
 			Status:  "success",
-			StartAt: "2024-01-01T00:00:00",
-			EndAt:   "2024-01-01T00:01:00",
+			StartTime: "2024-01-01T00:00:00",
+			EndTime:   "2024-01-01T00:01:00",
 		},
 	}
 
@@ -1075,8 +1075,8 @@ func TestBuildSecurityReport(t *testing.T) {
 	}
 
 	// Timestamps should be set
-	if report.Scan.StartAt == "" {
-		t.Error("StartAt should not be empty")
+	if report.Scan.StartTime == "" {
+		t.Error("StartTime should not be empty")
 	}
 
 	// Defaults kick in for empty scannerInfo

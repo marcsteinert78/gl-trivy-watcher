@@ -67,8 +67,8 @@ type ScanInfo struct {
 	Scanner  Scanner  `json:"scanner"`
 	Type     string   `json:"type"`
 	Status   string   `json:"status"`
-	StartAt  string   `json:"start_time"`
-	EndAt    string   `json:"end_time"`
+	StartTime  string   `json:"start_time"`
+	EndTime    string   `json:"end_time"`
 }
 
 // Analyzer identifies the tool that performed the analysis.

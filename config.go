@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"time"
 )
@@ -19,7 +20,6 @@ type Config struct {
 	DeployToken       string // write_package_registry scope (group-level works for all projects)
 	DeployTokenUser   string
 	GitLabAccessToken string // PAT or Group Token with api scope (for multi-project pipeline triggers)
-	TriggerToken      string // Legacy: project-specific pipeline trigger (single-project only)
 
 	// Timing
 	PollInterval  time.Duration
@@ -38,7 +38,6 @@ func LoadConfig() Config {
 		DeployToken:          os.Getenv("DEPLOY_TOKEN"),
 		DeployTokenUser:      os.Getenv("DEPLOY_TOKEN_USER"),
 		GitLabAccessToken:    os.Getenv("GITLAB_ACCESS_TOKEN"),
-		TriggerToken:         os.Getenv("TRIGGER_TOKEN"),
 		PollInterval:         getDuration("POLL_INTERVAL", 10*time.Second),
 		StabilizeTime:        getDuration("STABILIZE_TIME", 60*time.Second),
 		MinTriggerGap:        getDuration("MIN_TRIGGER_GAP", 5*time.Minute),
@@ -57,8 +56,8 @@ func (c Config) Validate() error {
 	if c.DeployTokenUser == "" {
 		return errors.New("DEPLOY_TOKEN_USER is required")
 	}
-	if c.TriggerToken == "" && c.GitLabAccessToken == "" {
-		return errors.New("either TRIGGER_TOKEN or GITLAB_ACCESS_TOKEN is required")
+	if c.GitLabAccessToken == "" {
+		return errors.New("GITLAB_ACCESS_TOKEN is required")
 	}
 	return nil
 }
@@ -80,11 +79,7 @@ func (c Config) PrintBanner() {
 	fmt.Println()
 	fmt.Println("Authentication:")
 	fmt.Printf("  Deploy Token:      %s (upload)\n", c.DeployTokenUser)
-	if c.GitLabAccessToken != "" {
-		fmt.Println("  Pipeline Trigger:  Access Token (multi-project)")
-	} else {
-		fmt.Println("  Pipeline Trigger:  Trigger Token (single-project)")
-	}
+	fmt.Println("  Pipeline Trigger:  Access Token (multi-project)")
 	fmt.Println()
 	fmt.Println("Timing:")
 	fmt.Printf("  Poll Interval:     %s\n", c.PollInterval)
@@ -102,12 +97,18 @@ func getEnv(key, defaultVal string) string {
 	return defaultVal
 }
 
-// getDuration parses duration from environment or returns default.
+// getDuration parses duration from environment or returns default. If the
+// value is set but unparseable, log a warning so misconfigurations don't
+// silently fall back to defaults.
 func getDuration(key string, defaultVal time.Duration) time.Duration {
-	if val := os.Getenv(key); val != "" {
-		if d, err := time.ParseDuration(val); err == nil {
-			return d
-		}
+	val := os.Getenv(key)
+	if val == "" {
+		return defaultVal
 	}
-	return defaultVal
+	d, err := time.ParseDuration(val)
+	if err != nil {
+		log.Printf("WARN: invalid duration for %s=%q (%v), using default %s", key, val, err, defaultVal)
+		return defaultVal
+	}
+	return d
 }

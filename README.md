@@ -27,26 +27,27 @@ Trivy Operator -> VulnerabilityReport CRs -> Trivy Watcher -> GitLab Package Reg
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
-| `GITLAB_PROJECT_ID` | required | Target project ID (numeric or path) |
+| `GITLAB_DEFAULT_PROJECT` | required | Fallback project (path) for namespaces without an explicit mapping |
+| `GITLAB_GROUP_PATH` | optional | Group prefix for `group/<namespace>` resolution |
 | `DEPLOY_TOKEN` | required | Deploy Token (scope: `write_package_registry`) |
 | `DEPLOY_TOKEN_USER` | required | Deploy Token username (e.g., `gitlab+deploy-token-123`) |
-| `TRIGGER_TOKEN` | required | Pipeline Trigger Token |
+| `GITLAB_ACCESS_TOKEN` | required | PAT or Group Token with `api` scope (multi-project pipeline triggers) |
 | `GITLAB_REF` | `main` | Branch to trigger pipeline on |
 | `GITLAB_API_URL` | `https://gitlab.com/api/v4` | GitLab API URL |
 | `POLL_INTERVAL` | `10s` | How often to check for changes |
 | `STABILIZE_TIME` | `60s` | Wait time after last change |
 | `MIN_TRIGGER_GAP` | `5m` | Minimum time between triggers |
+| `CACHE_TTL` | `5m` | Project-existence cache TTL |
 
 ## Token Setup (Minimal Permissions)
 
-1. **Deploy Token** (Settings → Repository → Deploy tokens)
+1. **Deploy Token** (Group → Settings → Repository → Deploy tokens)
    - Name: `trivy-watcher`
    - Scopes: `write_package_registry` only
    - Note the username (e.g., `gitlab+deploy-token-12345`)
 
-2. **Pipeline Trigger Token** (Settings → CI/CD → Pipeline trigger tokens)
-   - Description: `trivy-watcher`
-   - Can only trigger pipelines, no other permissions
+2. **Group / Project Access Token** (Settings → Access Tokens)
+   - Scope: `api` (needed to trigger pipelines across multiple projects)
 
 ## Deployment
 
@@ -70,13 +71,15 @@ trivy:cluster-scan:
   stage: trivy
   image: alpine:latest
   script:
-    - apk add --no-cache curl gzip jq
-    - 'curl -H "JOB-TOKEN: $CI_JOB_TOKEN" "$TRIVY_REPORT_URL" | gunzip > gl-container-scanning-report.json'
+    - apk add --no-cache curl gzip
+    - 'curl -H "JOB-TOKEN: $CI_JOB_TOKEN"
+       "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/trivy-reports/1.0.0/trivy-report-latest.json.gz"
+       | gunzip > gl-container-scanning-report.json'
   artifacts:
     reports:
       container_scanning: gl-container-scanning-report.json
   rules:
-    - if: $TRIVY_REPORT_URL
+    - if: $TRIVY_TRIGGERED == "true"
 ```
 
 ## Known Issues / TODOs

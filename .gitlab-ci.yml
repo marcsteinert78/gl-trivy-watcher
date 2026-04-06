@@ -66,6 +66,23 @@ test:build:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
 
+# Scheduled job: re-fetch the upstream GitLab Container Scanning schema and
+# run the schema tests against the freshly downloaded version. Catches schema
+# drift even when nobody touches the code. Run via a scheduled pipeline with
+# variable SCHEMA_DRIFT_CHECK=true.
+test:schema-drift:
+  stage: test
+  image: golang:${GO_VERSION}
+  tags:
+    - pve-local
+  script:
+    - apt-get update && apt-get install -y --no-install-recommends curl
+    - curl -sSLf -o testdata/container-scanning-report-format.json
+      "https://gitlab.com/gitlab-org/security-products/security-report-schemas/-/raw/master/dist/container-scanning-report-format.json"
+    - go test -run 'Schema' -v ./...
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $SCHEMA_DRIFT_CHECK == "true"
+
 # ============================================================================
 # Security Stage
 # ============================================================================

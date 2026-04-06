@@ -107,7 +107,7 @@ func convertItemsToVulnerabilities(items []unstructured.Unstructured) []Vulnerab
 
 			vulns = append(vulns, Vulnerability{
 				ID:          fmt.Sprintf("%s-%s-%s", vulnID, sanitize(image), pkgName),
-				Category:    "cluster_image_scanning",
+				Category:    "container_scanning",
 				Name:        vulnID,
 				Message:     fmt.Sprintf("%s in %s [%s/%s/%s]", vulnID, pkgName, namespace, resourceName, containerName),
 				Description: firstN(desc, 500),
@@ -149,6 +149,11 @@ func convertItemsToVulnerabilities(items []unstructured.Unstructured) []Vulnerab
 func buildSecurityReport(vulns []Vulnerability) SecurityReport {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05")
 
+	// Schema requires vulnerabilities to be an array, never null.
+	if vulns == nil {
+		vulns = []Vulnerability{}
+	}
+
 	return SecurityReport{
 		Version:         "15.0.0",
 		Vulnerabilities: vulns,
@@ -165,7 +170,7 @@ func buildSecurityReport(vulns []Vulnerability) SecurityReport {
 				Version: "0.58.0",
 				Vendor:  Vendor{Name: "Aqua Security"},
 			},
-			Type:    "cluster_image_scanning",
+			Type:    "container_scanning",
 			Status:  "success",
 			StartAt: now,
 			EndAt:   now,

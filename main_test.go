@@ -989,6 +989,22 @@ func TestNamespaceTrackerConcurrentAccess(t *testing.T) {
 // Hash Computation Tests
 // ============================================================================
 
+func TestCountUniqueCVEs(t *testing.T) {
+	vulns := []Vulnerability{
+		{Name: "CVE-2024-0001"},
+		{Name: "CVE-2024-0001"}, // duplicate (same CVE in another container)
+		{Name: "CVE-2024-0002"},
+		{Name: "CVE-2024-0003"},
+		{Name: "CVE-2024-0002"}, // duplicate
+	}
+	if got := countUniqueCVEs(vulns); got != 3 {
+		t.Errorf("countUniqueCVEs = %d, want 3", got)
+	}
+	if got := countUniqueCVEs(nil); got != 0 {
+		t.Errorf("countUniqueCVEs(nil) = %d, want 0", got)
+	}
+}
+
 func TestComputeVulnHash(t *testing.T) {
 	vulns1 := []Vulnerability{
 		{ID: "vuln-1", Name: "CVE-1"},

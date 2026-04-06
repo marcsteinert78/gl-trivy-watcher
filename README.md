@@ -82,10 +82,6 @@ trivy:cluster-scan:
     - if: $TRIVY_TRIGGERED == "true"
 ```
 
-## Known Issues / TODOs
-
-- [ ] **CVE Deduplication** (nice-to-have): Log output shows inflated counts (e.g., 4390 vs 406 unique) because same CVE is counted per container. GitLab deduplicates after upload, so dashboard is correct. Would be nice for cleaner logs.
-
 ## Building locally
 
 ```bash

@@ -227,6 +227,18 @@ func buildSecurityReport(vulns []Vulnerability, scanner scannerInfo) SecurityRep
 	}
 }
 
+// countUniqueCVEs returns the number of distinct CVE identifiers in the list.
+// trivy-operator emits one finding per (CVE, container) pair, so the raw list
+// inflates totals when the same image runs in multiple workloads. GitLab
+// deduplicates server-side; this gives operators an honest count in the logs.
+func countUniqueCVEs(vulns []Vulnerability) int {
+	seen := make(map[string]struct{}, len(vulns))
+	for _, v := range vulns {
+		seen[v.Name] = struct{}{}
+	}
+	return len(seen)
+}
+
 // computeVulnHash computes a hash of the vulnerability list.
 func computeVulnHash(vulns []Vulnerability) string {
 	data, _ := json.Marshal(vulns)

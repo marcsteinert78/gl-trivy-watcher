@@ -189,6 +189,8 @@ container_scanning:
   variables:
     CS_IMAGE: $IMAGE_LATEST
   rules:
+    - if: $SCHEMA_DRIFT_CHECK == "true"
+      when: never
     - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
@@ -215,4 +217,6 @@ renovate:
   script:
     - renovate --platform=gitlab --token="${GITLAB_TOKEN}" --endpoint="${CI_API_V4_URL}"
   rules:
+    - if: $SCHEMA_DRIFT_CHECK == "true"
+      when: never
     - if: $CI_PIPELINE_SOURCE == "schedule"

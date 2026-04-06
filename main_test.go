@@ -296,6 +296,35 @@ func TestConvertToGitLabReport(t *testing.T) {
 	}
 }
 
+func TestConvertResourceKindFromLabel(t *testing.T) {
+	item := unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"metadata": map[string]interface{}{
+				"name":      "argocd-dex-server-dcccd9ff6",
+				"namespace": "argocd",
+				"labels": map[string]interface{}{
+					"trivy-operator.container.name": "dex-server",
+					"trivy-operator.resource.kind":  "ReplicaSet",
+					"trivy-operator.resource.name":  "argocd-dex-server-dcccd9ff6",
+				},
+			},
+			"report": map[string]interface{}{
+				"artifact": map[string]interface{}{"repository": "dex", "tag": "v2"},
+				"vulnerabilities": []interface{}{
+					map[string]interface{}{"vulnerabilityID": "CVE-1", "severity": "HIGH", "resource": "x"},
+				},
+			},
+		},
+	}
+	vulns := convertItemsToVulnerabilities([]unstructured.Unstructured{item})
+	if len(vulns) != 1 {
+		t.Fatalf("got %d vulns", len(vulns))
+	}
+	if got := vulns[0].Location.KubernetesResource.Kind; got != "ReplicaSet" {
+		t.Errorf("Kind = %q, want ReplicaSet", got)
+	}
+}
+
 func TestConvertToGitLabReportWithDescription(t *testing.T) {
 	item := unstructured.Unstructured{
 		Object: map[string]interface{}{

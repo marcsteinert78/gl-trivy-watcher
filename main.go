@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
@@ -43,7 +44,23 @@ func main() {
 	}()
 
 	cfg.PrintBanner()
-	runWatcher(ctx, client, cfg)
+
+	// Liveness threshold: 3x poll interval, with a 30s floor so very short
+	// intervals don't make the probe flap on transient slow API calls.
+	staleAfter := 3 * cfg.PollInterval
+	if staleAfter < 30*time.Second {
+		staleAfter = 30 * time.Second
+	}
+	health := NewHealth(staleAfter)
+
+	go func() {
+		if err := RunHealthServer(ctx, cfg.HealthAddr, health); err != nil {
+			slog.Error("health server stopped", "error", err)
+			cancel()
+		}
+	}()
+
+	runWatcher(ctx, client, cfg, health)
 }
 
 // createK8sClient creates a Kubernetes dynamic client using in-cluster config.

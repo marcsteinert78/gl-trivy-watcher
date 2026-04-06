@@ -299,7 +299,7 @@ func TestPerformNamespaceUploadsFirstRun(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg)
+	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg, scannerInfo{})
 
 	uploaded := mock.getUploaded()
 	triggered := mock.getTriggered()
@@ -339,7 +339,7 @@ func TestPerformNamespaceUploadsSkipsUnchanged(t *testing.T) {
 	ctx := context.Background()
 
 	// First run - should upload
-	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg)
+	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg, scannerInfo{})
 
 	if len(mock.getUploaded()) != 1 {
 		t.Fatalf("First run: expected 1 upload, got %d", len(mock.getUploaded()))
@@ -348,7 +348,7 @@ func TestPerformNamespaceUploadsSkipsUnchanged(t *testing.T) {
 	mock.reset()
 
 	// Second run with same data - should skip
-	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg)
+	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg, scannerInfo{})
 
 	if len(mock.getUploaded()) != 0 {
 		t.Errorf("Second run: expected 0 uploads (unchanged), got %d", len(mock.getUploaded()))
@@ -380,7 +380,7 @@ func TestPerformNamespaceUploadsDetectsChange(t *testing.T) {
 	byNamespace1 := map[string][]unstructured.Unstructured{
 		"mediastack": {createTestReport("mediastack", "report-1", "CVE-2021-1111")},
 	}
-	performNamespaceUploads(ctx, byNamespace1, resolver, tracker, cfg)
+	performNamespaceUploads(ctx, byNamespace1, resolver, tracker, cfg, scannerInfo{})
 
 	mock.reset()
 
@@ -388,7 +388,7 @@ func TestPerformNamespaceUploadsDetectsChange(t *testing.T) {
 	byNamespace2 := map[string][]unstructured.Unstructured{
 		"mediastack": {createTestReport("mediastack", "report-1", "CVE-2021-9999")}, // Different CVE
 	}
-	performNamespaceUploads(ctx, byNamespace2, resolver, tracker, cfg)
+	performNamespaceUploads(ctx, byNamespace2, resolver, tracker, cfg, scannerInfo{})
 
 	if len(mock.getUploaded()) != 1 {
 		t.Errorf("Expected 1 upload (changed), got %d", len(mock.getUploaded()))
@@ -422,7 +422,7 @@ func TestPerformNamespaceUploadsPartialChange(t *testing.T) {
 		"mediastack": {createTestReport("mediastack", "report-1", "CVE-2021-1111")},
 		"gitlab":     {createTestReport("gitlab", "report-2", "CVE-2021-2222")},
 	}
-	performNamespaceUploads(ctx, byNamespace1, resolver, tracker, cfg)
+	performNamespaceUploads(ctx, byNamespace1, resolver, tracker, cfg, scannerInfo{})
 
 	if len(mock.getUploaded()) != 2 {
 		t.Fatalf("First run: expected 2 uploads, got %d", len(mock.getUploaded()))
@@ -435,7 +435,7 @@ func TestPerformNamespaceUploadsPartialChange(t *testing.T) {
 		"mediastack": {createTestReport("mediastack", "report-1", "CVE-2021-9999")}, // Changed
 		"gitlab":     {createTestReport("gitlab", "report-2", "CVE-2021-2222")},     // Same
 	}
-	performNamespaceUploads(ctx, byNamespace2, resolver, tracker, cfg)
+	performNamespaceUploads(ctx, byNamespace2, resolver, tracker, cfg, scannerInfo{})
 
 	uploaded := mock.getUploaded()
 	if len(uploaded) != 1 {
@@ -471,7 +471,7 @@ func TestPerformNamespaceUploadsConsolidated(t *testing.T) {
 		"kube-system": {createTestReport("kube-system", "report-1", "CVE-2021-1111")},
 		"monitoring":  {createTestReport("monitoring", "report-2", "CVE-2021-2222")},
 	}
-	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg)
+	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg, scannerInfo{})
 
 	uploaded := mock.getUploaded()
 	// Should upload to default project (consolidated)
@@ -507,7 +507,7 @@ func TestPerformNamespaceUploadsConsolidatedSkipsUnchanged(t *testing.T) {
 	}
 
 	// First run
-	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg)
+	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg, scannerInfo{})
 	if len(mock.getUploaded()) != 1 {
 		t.Fatalf("First run: expected 1 upload, got %d", len(mock.getUploaded()))
 	}
@@ -515,7 +515,7 @@ func TestPerformNamespaceUploadsConsolidatedSkipsUnchanged(t *testing.T) {
 	mock.reset()
 
 	// Second run - same data, should skip
-	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg)
+	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg, scannerInfo{})
 	if len(mock.getUploaded()) != 0 {
 		t.Errorf("Second run: expected 0 uploads (unchanged), got %d", len(mock.getUploaded()))
 	}
@@ -563,7 +563,7 @@ func TestPerformNamespaceUploadsEmptyVulns(t *testing.T) {
 		},
 	}
 
-	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg)
+	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg, scannerInfo{})
 
 	// Should skip upload for empty vulnerabilities
 	if len(mock.getUploaded()) != 0 {
@@ -597,7 +597,7 @@ func TestPerformNamespaceUploadsMixedMatchAndDefault(t *testing.T) {
 		"kube-system": {createTestReport("kube-system", "report-2", "CVE-2021-2222")}, // Consolidated
 	}
 
-	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg)
+	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg, scannerInfo{})
 
 	uploaded := mock.getUploaded()
 	// Should have 2 uploads: mediastack + consolidated (default)

@@ -15,6 +15,12 @@ import (
 	"k8s.io/client-go/dynamic"
 )
 
+// Tracker keys for non-namespace state entries.
+const (
+	globalKey       = "__global__"
+	consolidatedKey = "__consolidated__"
+)
+
 // runWatcher starts the main vulnerability monitoring loop.
 func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config) {
 	// DeployToken only has write_package_registry, can't read projects
@@ -87,7 +93,6 @@ func processVulnerabilityReports(
 	now := time.Now()
 
 	// Step 2: Check if content changed
-	const globalKey = "__global__"
 	state := tracker.GetState(globalKey)
 
 	changed, oldHash := tracker.UpdateHash(globalKey, globalHash)
@@ -136,7 +141,8 @@ func processVulnerabilityReports(
 	fmt.Printf("[%s] Total: %d VulnerabilityReports, %d vulnerabilities\n\n", now.Format("15:04:05"), len(reports.Items), totalVulns)
 
 	byNamespace := groupByNamespace(reports.Items)
-	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg)
+	scanner := extractScannerInfo(reports.Items)
+	performNamespaceUploads(ctx, byNamespace, resolver, tracker, cfg, scanner)
 
 	// Mark as triggered
 	tracker.MarkTriggered(globalKey, globalHash)
@@ -176,6 +182,7 @@ func performNamespaceUploads(
 	resolver *ProjectResolver,
 	tracker *NamespaceTracker,
 	cfg Config,
+	scanner scannerInfo,
 ) {
 	type nsUpload struct {
 		namespace string
@@ -229,7 +236,7 @@ func performNamespaceUploads(
 			continue
 		}
 
-		report := buildSecurityReport(m.vulns)
+		report := buildSecurityReport(m.vulns, scanner)
 		fmt.Printf("  → %s: %d vulnerabilities → %s\n", m.namespace, len(m.vulns), m.project)
 		if err := uploadAndTrigger(cfg, m.project, report); err != nil {
 			fmt.Fprintf(os.Stderr, "    ERROR: %v\n", err)
@@ -242,11 +249,10 @@ func performNamespaceUploads(
 	// Upload consolidated unmatched (only if hash changed)
 	if len(unmatchedVulns) > 0 {
 		consolidatedHash := computeVulnHash(unmatchedVulns)
-		consolidatedKey := "__consolidated__"
 		state := tracker.GetState(consolidatedKey)
 
 		if state.LastTriggerHash != consolidatedHash {
-			report := buildSecurityReport(unmatchedVulns)
+			report := buildSecurityReport(unmatchedVulns, scanner)
 			fmt.Printf("  → consolidated (%d namespaces): %d vulnerabilities → %s\n",
 				len(unmatchedNames), len(unmatchedVulns), cfg.GitLabDefaultProject)
 			fmt.Printf("    Namespaces: %v\n", unmatchedNames)

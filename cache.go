@@ -62,7 +62,7 @@ func (c *ProjectCache) checkViaAPI(projectPath string) bool {
 	}
 	req.Header.Set("PRIVATE-TOKEN", c.token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return false
 	}

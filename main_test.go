@@ -93,7 +93,7 @@ func TestFirstN(t *testing.T) {
 		{"exact match", "exactly8", 8, "exactly8"},
 		{"zero limit", "test", 0, "..."},
 		{"single char limit", "test", 1, "t..."},
-		{"unicode bytes", "héllo", 3, "hé..."},  // 'é' is 2 bytes in UTF-8
+		{"unicode runes", "héllo", 3, "hél..."}, // rune-aware truncation
 	}
 
 	for _, tc := range tests {
@@ -224,7 +224,7 @@ func TestConvertToGitLabReport(t *testing.T) {
 	}
 
 	vulns := convertItemsToVulnerabilities([]unstructured.Unstructured{item})
-	report := buildSecurityReport(vulns)
+	report := buildSecurityReport(vulns, scannerInfo{})
 
 	// Check report structure
 	if report.Version != "15.0.0" {
@@ -319,7 +319,7 @@ func TestConvertToGitLabReportWithDescription(t *testing.T) {
 	}
 
 	vulns := convertItemsToVulnerabilities([]unstructured.Unstructured{item})
-	report := buildSecurityReport(vulns)
+	report := buildSecurityReport(vulns, scannerInfo{})
 
 	if len(report.Vulnerabilities) != 1 {
 		t.Fatalf("Expected 1 vulnerability, got %d", len(report.Vulnerabilities))
@@ -361,7 +361,7 @@ func TestConvertToGitLabReportLongDescription(t *testing.T) {
 	}
 
 	vulns := convertItemsToVulnerabilities([]unstructured.Unstructured{item})
-	report := buildSecurityReport(vulns)
+	report := buildSecurityReport(vulns, scannerInfo{})
 
 	// Description should be truncated to 500 chars + "..."
 	if len(report.Vulnerabilities[0].Description) > 504 {
@@ -392,10 +392,10 @@ func TestHashStability(t *testing.T) {
 
 	// Generate report twice (timestamps will differ)
 	convertedVulns1 := convertItemsToVulnerabilities([]unstructured.Unstructured{item})
-	report1 := buildSecurityReport(convertedVulns1)
+	report1 := buildSecurityReport(convertedVulns1, scannerInfo{})
 	time.Sleep(10 * time.Millisecond) // Ensure different timestamp
 	convertedVulns2 := convertItemsToVulnerabilities([]unstructured.Unstructured{item})
-	report2 := buildSecurityReport(convertedVulns2)
+	report2 := buildSecurityReport(convertedVulns2, scannerInfo{})
 
 	// Full report hash might differ (includes timestamps)
 	json1, _ := json.Marshal(report1)
@@ -417,7 +417,7 @@ func TestHashStability(t *testing.T) {
 
 func TestEmptyReport(t *testing.T) {
 	vulns := convertItemsToVulnerabilities([]unstructured.Unstructured{})
-	report := buildSecurityReport(vulns)
+	report := buildSecurityReport(vulns, scannerInfo{})
 
 	if len(report.Vulnerabilities) != 0 {
 		t.Errorf("Expected 0 vulnerabilities, got %d", len(report.Vulnerabilities))
@@ -454,7 +454,7 @@ func TestVulnerabilityID(t *testing.T) {
 	}
 
 	vulns := convertItemsToVulnerabilities([]unstructured.Unstructured{item})
-	report := buildSecurityReport(vulns)
+	report := buildSecurityReport(vulns, scannerInfo{})
 
 	if len(report.Vulnerabilities) != 1 {
 		t.Fatalf("Expected 1 vulnerability, got %d", len(report.Vulnerabilities))
@@ -495,7 +495,7 @@ func TestMissingTag(t *testing.T) {
 	}
 
 	vulns := convertItemsToVulnerabilities([]unstructured.Unstructured{item})
-	report := buildSecurityReport(vulns)
+	report := buildSecurityReport(vulns, scannerInfo{})
 
 	// Should default to "latest"
 	expectedImage := "nginx:latest"
@@ -517,7 +517,7 @@ func TestMissingReport(t *testing.T) {
 	}
 
 	vulns := convertItemsToVulnerabilities([]unstructured.Unstructured{item})
-	report := buildSecurityReport(vulns)
+	report := buildSecurityReport(vulns, scannerInfo{})
 
 	// Should handle gracefully
 	if len(report.Vulnerabilities) != 0 {
@@ -549,7 +549,7 @@ func TestMissingMetadataDefaults(t *testing.T) {
 	}
 
 	vulns := convertItemsToVulnerabilities([]unstructured.Unstructured{item})
-	report := buildSecurityReport(vulns)
+	report := buildSecurityReport(vulns, scannerInfo{})
 
 	if len(report.Vulnerabilities) != 1 {
 		t.Fatalf("Expected 1 vulnerability, got %d", len(report.Vulnerabilities))
@@ -625,7 +625,7 @@ func TestMultipleReports(t *testing.T) {
 	}
 
 	vulns := convertItemsToVulnerabilities(items)
-	report := buildSecurityReport(vulns)
+	report := buildSecurityReport(vulns, scannerInfo{})
 
 	// Should have 3 vulnerabilities total
 	if len(report.Vulnerabilities) != 3 {
@@ -806,7 +806,7 @@ func BenchmarkConvertToGitLabReport(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		vulns := convertItemsToVulnerabilities(items)
-		buildSecurityReport(vulns)
+		buildSecurityReport(vulns, scannerInfo{})
 	}
 }
 
@@ -1040,7 +1040,7 @@ func TestBuildSecurityReport(t *testing.T) {
 		{ID: "test-1", Name: "CVE-1", Severity: "High"},
 	}
 
-	report := buildSecurityReport(vulns)
+	report := buildSecurityReport(vulns, scannerInfo{})
 
 	if report.Version != "15.0.0" {
 		t.Errorf("Version = %q, want '15.0.0'", report.Version)
@@ -1080,7 +1080,7 @@ func TestValidateConfig(t *testing.T) {
 				GitLabDefaultProject: "group/project",
 				DeployToken:          "token",
 				DeployTokenUser:      "user",
-				TriggerToken:         "trigger",
+				GitLabAccessToken:    "access",
 			},
 			wantErr: false,
 		},
@@ -1089,7 +1089,7 @@ func TestValidateConfig(t *testing.T) {
 			cfg: Config{
 				DeployToken:     "token",
 				DeployTokenUser: "user",
-				TriggerToken:    "trigger",
+				GitLabAccessToken: "access",
 			},
 			wantErr: true,
 		},
@@ -1098,7 +1098,7 @@ func TestValidateConfig(t *testing.T) {
 			cfg: Config{
 				GitLabDefaultProject: "group/project",
 				DeployTokenUser:      "user",
-				TriggerToken:         "trigger",
+				GitLabAccessToken:    "access",
 			},
 			wantErr: true,
 		},
@@ -1107,12 +1107,12 @@ func TestValidateConfig(t *testing.T) {
 			cfg: Config{
 				GitLabDefaultProject: "group/project",
 				DeployToken:          "token",
-				TriggerToken:         "trigger",
+				GitLabAccessToken:    "access",
 			},
 			wantErr: true,
 		},
 		{
-			name: "missing trigger token",
+			name: "missing access token",
 			cfg: Config{
 				GitLabDefaultProject: "group/project",
 				DeployToken:          "token",

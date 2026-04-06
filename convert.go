@@ -26,6 +26,36 @@ func groupByNamespace(items []unstructured.Unstructured) map[string][]unstructur
 	return groups
 }
 
+// scannerInfo holds metadata about the scanner that produced a report,
+// extracted from the trivy-operator VulnerabilityReport CR. Used so the
+// Analyzer/Scanner versions in the GitLab report reflect the actual operator
+// in the cluster instead of being hardcoded.
+type scannerInfo struct {
+	Name    string
+	Version string
+	Vendor  string
+}
+
+// extractScannerInfo reads the scanner block from the first report that has
+// one. All trivy-operator emissions in a single cluster come from the same
+// operator instance, so picking the first non-empty scanner block is safe.
+func extractScannerInfo(items []unstructured.Unstructured) scannerInfo {
+	for _, item := range items {
+		scanner, _, _ := unstructured.NestedMap(item.Object, "report", "scanner")
+		if scanner == nil {
+			continue
+		}
+		name, _ := scanner["name"].(string)
+		version, _ := scanner["version"].(string)
+		if name == "" && version == "" {
+			continue
+		}
+		vendor, _ := scanner["vendor"].(string)
+		return scannerInfo{Name: name, Version: version, Vendor: vendor}
+	}
+	return scannerInfo{}
+}
+
 // convertItemsToVulnerabilities converts VulnerabilityReports to GitLab format.
 func convertItemsToVulnerabilities(items []unstructured.Unstructured) []Vulnerability {
 	var vulns []Vulnerability
@@ -145,13 +175,32 @@ func convertItemsToVulnerabilities(items []unstructured.Unstructured) []Vulnerab
 	return vulns
 }
 
+// scannerVersionUnknown is reported when no source CR provided a scanner block.
+const scannerVersionUnknown = "unknown"
+
 // buildSecurityReport creates a GitLab Security Report from vulnerabilities.
-func buildSecurityReport(vulns []Vulnerability) SecurityReport {
+// The scanner argument carries the actual scanner name/version extracted from
+// trivy-operator CRs so the report metadata reflects the running operator
+// instead of a hardcoded version.
+func buildSecurityReport(vulns []Vulnerability, scanner scannerInfo) SecurityReport {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05")
 
 	// Schema requires vulnerabilities to be an array, never null.
 	if vulns == nil {
 		vulns = []Vulnerability{}
+	}
+
+	scannerName := scanner.Name
+	if scannerName == "" {
+		scannerName = "Trivy"
+	}
+	scannerVersion := scanner.Version
+	if scannerVersion == "" {
+		scannerVersion = scannerVersionUnknown
+	}
+	vendorName := scanner.Vendor
+	if vendorName == "" {
+		vendorName = "Aqua Security"
 	}
 
 	return SecurityReport{
@@ -161,14 +210,14 @@ func buildSecurityReport(vulns []Vulnerability) SecurityReport {
 			Analyzer: Analyzer{
 				ID:      "trivy-operator",
 				Name:    "Trivy Operator",
-				Version: "0.24.0",
-				Vendor:  Vendor{Name: "Aqua Security"},
+				Version: scannerVersion,
+				Vendor:  Vendor{Name: vendorName},
 			},
 			Scanner: Scanner{
 				ID:      "trivy",
-				Name:    "Trivy",
-				Version: "0.58.0",
-				Vendor:  Vendor{Name: "Aqua Security"},
+				Name:    scannerName,
+				Version: scannerVersion,
+				Vendor:  Vendor{Name: vendorName},
 			},
 			Type:    "container_scanning",
 			Status:  "success",
@@ -212,8 +261,9 @@ func sanitize(s string) string {
 }
 
 func firstN(s string, n int) string {
-	if len(s) <= n {
+	runes := []rune(s)
+	if len(runes) <= n {
 		return s
 	}
-	return s[:n] + "..."
+	return string(runes[:n]) + "..."
 }

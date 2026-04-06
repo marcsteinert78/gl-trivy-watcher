@@ -9,7 +9,12 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
+
+// httpClient is shared by all GitLab API calls. Default client has no timeout,
+// which would block the watcher loop indefinitely on a hung connection.
+var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 // uploadAndTrigger uploads a security report and triggers the CI pipeline.
 func uploadAndTrigger(cfg Config, project string, report SecurityReport) error {
@@ -51,7 +56,7 @@ func uploadToPackageRegistry(cfg Config, project string, report []byte) error {
 	req.SetBasicAuth(cfg.DeployTokenUser, cfg.DeployToken)
 	req.Header.Set("Content-Type", "application/gzip")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("http: %w", err)
 	}
@@ -65,23 +70,13 @@ func uploadToPackageRegistry(cfg Config, project string, report []byte) error {
 	return nil
 }
 
-// triggerPipeline triggers a GitLab CI pipeline for the project.
+// triggerPipeline triggers a GitLab CI pipeline for the project using the
+// /pipeline API with PRIVATE-TOKEN. The TRIVY_TRIGGERED variable lets CI rules
+// distinguish trivy-watcher pipelines from other API-triggered pipelines.
 func triggerPipeline(cfg Config, project string) error {
-	// Prefer GitLabAccessToken (works across projects) over TriggerToken (project-specific)
-	if cfg.GitLabAccessToken != "" {
-		return triggerPipelineWithAccessToken(cfg, project)
-	}
-	return triggerPipelineWithTriggerToken(cfg, project)
-}
-
-// triggerPipelineWithAccessToken uses the /pipeline API with PRIVATE-TOKEN.
-func triggerPipelineWithAccessToken(cfg Config, project string) error {
 	pipelineURL := fmt.Sprintf("%s/projects/%s/pipeline",
 		cfg.GitLabAPIURL, url.PathEscape(project))
 
-	// Pass TRIVY_TRIGGERED variable so CI can detect trivy-watcher triggers.
-	// This is more elegant than checking CI_PIPELINE_SOURCE since it works
-	// regardless of whether we use /pipeline (source=api) or /trigger/pipeline (source=trigger).
 	body := fmt.Sprintf(`{"ref":"%s","variables":[{"key":"TRIVY_TRIGGERED","value":"true"}]}`, cfg.GitLabRef)
 	req, err := http.NewRequest("POST", pipelineURL, strings.NewReader(body))
 	if err != nil {
@@ -90,7 +85,7 @@ func triggerPipelineWithAccessToken(cfg Config, project string) error {
 	req.Header.Set("PRIVATE-TOKEN", cfg.GitLabAccessToken)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("http: %w", err)
 	}
@@ -99,30 +94,6 @@ func triggerPipelineWithAccessToken(cfg Config, project string) error {
 	if resp.StatusCode != 201 && resp.StatusCode != 200 {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	return nil
-}
-
-// triggerPipelineWithTriggerToken uses the /trigger/pipeline API (legacy).
-func triggerPipelineWithTriggerToken(cfg Config, project string) error {
-	triggerURL := fmt.Sprintf("%s/projects/%s/trigger/pipeline",
-		cfg.GitLabAPIURL, url.PathEscape(project))
-
-	data := url.Values{
-		"token": {cfg.TriggerToken},
-		"ref":   {cfg.GitLabRef},
-	}
-
-	resp, err := http.PostForm(triggerURL, data)
-	if err != nil {
-		return fmt.Errorf("http: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != 201 && resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 	}
 
 	return nil

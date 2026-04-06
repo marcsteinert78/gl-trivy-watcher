@@ -109,7 +109,7 @@ func TestUploadToPackageRegistryError(t *testing.T) {
 	}
 }
 
-func TestTriggerPipelineWithAccessToken(t *testing.T) {
+func TestTriggerPipeline(t *testing.T) {
 	var receivedToken string
 	var receivedBody map[string]interface{}
 
@@ -138,10 +138,10 @@ func TestTriggerPipelineWithAccessToken(t *testing.T) {
 		GitLabRef:         "main",
 	}
 
-	err := triggerPipelineWithAccessToken(cfg, "group/project")
+	err := triggerPipeline(cfg, "group/project")
 
 	if err != nil {
-		t.Fatalf("triggerPipelineWithAccessToken failed: %v", err)
+		t.Fatalf("triggerPipeline failed: %v", err)
 	}
 
 	if receivedToken != "access-token-123" {
@@ -161,106 +161,6 @@ func TestTriggerPipelineWithAccessToken(t *testing.T) {
 		if v["key"] != "TRIVY_TRIGGERED" || v["value"] != "true" {
 			t.Errorf("Expected TRIVY_TRIGGERED=true, got %v", v)
 		}
-	}
-}
-
-func TestTriggerPipelineWithTriggerToken(t *testing.T) {
-	var receivedToken string
-	var receivedRef string
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" {
-			t.Errorf("Expected POST, got %s", r.Method)
-		}
-
-		if !strings.HasSuffix(r.URL.Path, "/trigger/pipeline") {
-			t.Errorf("Unexpected path: %s", r.URL.Path)
-		}
-
-		_ = r.ParseForm()
-		receivedToken = r.FormValue("token")
-		receivedRef = r.FormValue("ref")
-
-		w.WriteHeader(http.StatusCreated)
-	}))
-	defer server.Close()
-
-	cfg := Config{
-		GitLabAPIURL: server.URL,
-		TriggerToken: "trigger-token-456",
-		GitLabRef:    "develop",
-	}
-
-	err := triggerPipelineWithTriggerToken(cfg, "group/project")
-
-	if err != nil {
-		t.Fatalf("triggerPipelineWithTriggerToken failed: %v", err)
-	}
-
-	if receivedToken != "trigger-token-456" {
-		t.Errorf("Token = %q, want 'trigger-token-456'", receivedToken)
-	}
-
-	if receivedRef != "develop" {
-		t.Errorf("Ref = %q, want 'develop'", receivedRef)
-	}
-}
-
-func TestTriggerPipelinePreferAccessToken(t *testing.T) {
-	usedAccessToken := false
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("PRIVATE-TOKEN") != "" {
-			usedAccessToken = true
-		}
-		w.WriteHeader(http.StatusCreated)
-	}))
-	defer server.Close()
-
-	cfg := Config{
-		GitLabAPIURL:      server.URL,
-		GitLabAccessToken: "access-token",
-		TriggerToken:      "trigger-token",
-		GitLabRef:         "main",
-	}
-
-	err := triggerPipeline(cfg, "group/project")
-
-	if err != nil {
-		t.Fatalf("triggerPipeline failed: %v", err)
-	}
-
-	if !usedAccessToken {
-		t.Error("Should prefer access token over trigger token")
-	}
-}
-
-func TestTriggerPipelineFallbackToTriggerToken(t *testing.T) {
-	usedTriggerEndpoint := false
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/trigger/pipeline") {
-			usedTriggerEndpoint = true
-		}
-		w.WriteHeader(http.StatusCreated)
-	}))
-	defer server.Close()
-
-	cfg := Config{
-		GitLabAPIURL:      server.URL,
-		GitLabAccessToken: "", // Empty - should fallback
-		TriggerToken:      "trigger-token",
-		GitLabRef:         "main",
-	}
-
-	err := triggerPipeline(cfg, "group/project")
-
-	if err != nil {
-		t.Fatalf("triggerPipeline failed: %v", err)
-	}
-
-	if !usedTriggerEndpoint {
-		t.Error("Should fallback to trigger token endpoint")
 	}
 }
 

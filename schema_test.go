@@ -45,7 +45,7 @@ func TestReportMatchesGitLabSchema(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			vulns := convertItemsToVulnerabilities([]unstructured.Unstructured{tc.item})
-			report := buildSecurityReport(vulns)
+			report := buildSecurityReport(vulns, scannerInfo{})
 
 			data, err := json.Marshal(report)
 			if err != nil {
@@ -77,7 +77,7 @@ func TestEmptyReportMatchesSchema(t *testing.T) {
 		t.Fatalf("read schema: %v", err)
 	}
 
-	report := buildSecurityReport(nil)
+	report := buildSecurityReport(nil, scannerInfo{})
 	data, err := json.Marshal(report)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)

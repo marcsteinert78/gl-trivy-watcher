@@ -253,8 +253,8 @@ func TestConvertToGitLabReport(t *testing.T) {
 	if report.Scan.Scanner.Vendor.Name != "Aqua Security" {
 		t.Errorf("Scanner Vendor = %q, want %q", report.Scan.Scanner.Vendor.Name, "Aqua Security")
 	}
-	if report.Scan.Type != "cluster_image_scanning" {
-		t.Errorf("Scan Type = %q, want %q", report.Scan.Type, "cluster_image_scanning")
+	if report.Scan.Type != "container_scanning" {
+		t.Errorf("Scan Type = %q, want %q", report.Scan.Type, "container_scanning")
 	}
 	if report.Scan.Status != "success" {
 		t.Errorf("Scan Status = %q, want %q", report.Scan.Status, "success")
@@ -269,8 +269,8 @@ func TestConvertToGitLabReport(t *testing.T) {
 
 	// Check category
 	for _, v := range report.Vulnerabilities {
-		if v.Category != "cluster_image_scanning" {
-			t.Errorf("Category = %q, want 'cluster_image_scanning'", v.Category)
+		if v.Category != "container_scanning" {
+			t.Errorf("Category = %q, want 'container_scanning'", v.Category)
 		}
 	}
 
@@ -651,7 +651,7 @@ func TestGzipCompression(t *testing.T) {
 		Vulnerabilities: []Vulnerability{
 			{
 				ID:       "test-id",
-				Category: "cluster_image_scanning",
+				Category: "container_scanning",
 				Name:     "CVE-2021-12345",
 				Severity: "High",
 			},
@@ -705,7 +705,7 @@ func TestSecurityReportJSON(t *testing.T) {
 		Vulnerabilities: []Vulnerability{
 			{
 				ID:          "test-id",
-				Category:    "cluster_image_scanning",
+				Category:    "container_scanning",
 				Name:        "CVE-2021-12345",
 				Message:     "Test message",
 				Description: "Test description",
@@ -744,7 +744,7 @@ func TestSecurityReportJSON(t *testing.T) {
 				Version: "0.58.0",
 				Vendor:  Vendor{Name: "Aqua Security"},
 			},
-			Type:    "cluster_image_scanning",
+			Type:    "container_scanning",
 			Status:  "success",
 			StartAt: "2024-01-01T00:00:00",
 			EndAt:   "2024-01-01T00:01:00",
@@ -1050,8 +1050,8 @@ func TestBuildSecurityReport(t *testing.T) {
 		t.Errorf("Expected 1 vulnerability, got %d", len(report.Vulnerabilities))
 	}
 
-	if report.Scan.Type != "cluster_image_scanning" {
-		t.Errorf("Scan.Type = %q, want 'cluster_image_scanning'", report.Scan.Type)
+	if report.Scan.Type != "container_scanning" {
+		t.Errorf("Scan.Type = %q, want 'container_scanning'", report.Scan.Type)
 	}
 
 	if report.Scan.Status != "success" {

@@ -9,12 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 )
-
-// httpClient is shared by all GitLab API calls. Default client has no timeout,
-// which would block the watcher loop indefinitely on a hung connection.
-var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 // Generic Package Registry coordinates for the uploaded report. We always
 // publish to the same package/version/filename so consuming pipelines can

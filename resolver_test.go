@@ -7,7 +7,43 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+	clienttesting "k8s.io/client-go/testing"
 )
+
+// newFakeDynamicWithNamespace builds a fake dynamic client preloaded with a
+// single Namespace carrying the given annotation value (empty value = no
+// annotation). It also returns the action accumulator so tests can count
+// apiserver calls.
+func newFakeDynamicWithNamespace(name, annotationValue string) (*dynamicfake.FakeDynamicClient, *clienttesting.Fake) {
+	scheme := runtime.NewScheme()
+	nsGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}
+	scheme.AddKnownTypeWithName(nsGVR.GroupVersion().WithKind("NamespaceList"), &unstructured.UnstructuredList{})
+
+	ns := &unstructured.Unstructured{}
+	ns.SetGroupVersionKind(schema.GroupVersionKind{Version: "v1", Kind: "Namespace"})
+	ns.SetName(name)
+	if annotationValue != "" {
+		ns.SetAnnotations(map[string]string{annotationGitLabProject: annotationValue})
+	}
+
+	client := dynamicfake.NewSimpleDynamicClient(scheme, ns)
+	return client, &client.Fake
+}
+
+func countNamespaceGets(actions []clienttesting.Action) int {
+	n := 0
+	for _, a := range actions {
+		if a.GetVerb() == "get" && a.GetResource().Resource == "namespaces" {
+			n++
+		}
+	}
+	return n
+}
 
 // Resolve returns (project, isDefault) where:
 // - isDefault=false: project was found (via annotation or convention)
@@ -208,6 +244,77 @@ func TestProjectCacheMarkExists(t *testing.T) {
 
 	if !cache.Exists("my/project") {
 		t.Error("MarkExists should make Exists return true")
+	}
+}
+
+func TestProjectResolverAnnotationCacheHit(t *testing.T) {
+	client, fakeAccumulator := newFakeDynamicWithNamespace("annotated-ns", "explicit/project")
+
+	cache := NewProjectCache(time.Minute, "http://unused", "token")
+	resolver := NewProjectResolver("group", "default/project", cache, client)
+
+	ctx := context.Background()
+
+	for i := 0; i < 5; i++ {
+		project, isDefault := resolver.Resolve(ctx, "annotated-ns")
+		if project != "explicit/project" {
+			t.Fatalf("call %d: project = %q, want 'explicit/project'", i, project)
+		}
+		if isDefault {
+			t.Fatalf("call %d: isDefault should be false for annotated namespace", i)
+		}
+	}
+
+	if got := countNamespaceGets(fakeAccumulator.Actions()); got != 1 {
+		t.Errorf("expected 1 namespace GET (cached), got %d", got)
+	}
+}
+
+func TestProjectResolverAnnotationCacheNegativeHit(t *testing.T) {
+	// Namespace exists but has no annotation — cache the empty result so
+	// we don't re-query the apiserver every poll.
+	client, fakeAccumulator := newFakeDynamicWithNamespace("plain-ns", "")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	cache := NewProjectCache(time.Minute, server.URL, "token")
+	resolver := NewProjectResolver("group", "default/project", cache, client)
+
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		project, isDefault := resolver.Resolve(ctx, "plain-ns")
+		if project != "default/project" || !isDefault {
+			t.Fatalf("call %d: got (%q, %v), want fallback", i, project, isDefault)
+		}
+	}
+
+	if got := countNamespaceGets(fakeAccumulator.Actions()); got != 1 {
+		t.Errorf("expected 1 namespace GET (negative result cached), got %d", got)
+	}
+}
+
+func TestProjectResolverAnnotationCacheExpiry(t *testing.T) {
+	client, fakeAccumulator := newFakeDynamicWithNamespace("annotated-ns", "explicit/project")
+
+	cache := NewProjectCache(time.Minute, "http://unused", "token")
+	resolver := NewProjectResolver("group", "default/project", cache, client)
+	resolver.annotationTTL = 10 * time.Millisecond
+
+	ctx := context.Background()
+	resolver.Resolve(ctx, "annotated-ns")
+	resolver.Resolve(ctx, "annotated-ns")
+	if got := countNamespaceGets(fakeAccumulator.Actions()); got != 1 {
+		t.Errorf("before TTL: expected 1 GET, got %d", got)
+	}
+
+	time.Sleep(20 * time.Millisecond)
+
+	resolver.Resolve(ctx, "annotated-ns")
+	if got := countNamespaceGets(fakeAccumulator.Actions()); got != 2 {
+		t.Errorf("after TTL: expected 2 GETs, got %d", got)
 	}
 }
 

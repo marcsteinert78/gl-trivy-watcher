@@ -1,38 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "local>msteinert1/homeserver/tools/renovate-config"
-  ],
-  "enabledManagers": [
-    "gomod",
-    "dockerfile",
-    "gitlabci"
-  ],
-  "gomod": {
-    "fileMatch": [
-      "(^|/)go\\.mod$"
-    ],
-    "postUpdateOptions": [
-      "gomodTidy"
-    ]
-  },
-  "dockerfile": {
-    "fileMatch": [
-      "(^|/)Dockerfile$"
-    ]
-  },
-  "gitlabci": {
-    "fileMatch": [
-      "(^|/)\\.gitlab-ci\\.ya?ml$"
-    ]
-  },
-  "packageRules": [
-    {
-      "description": "Group Go dependencies",
-      "matchManagers": [
-        "gomod"
-      ],
-      "groupName": "Go Dependencies"
-    }
+    "local>msteinert1/homeserver/tools/renovate-config:go"
   ]
 }

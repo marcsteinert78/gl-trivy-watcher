@@ -1,90 +1,38 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended", ":semanticCommits", ":gitSignOff"],
-  "enabled": true,
-  "timezone": "Europe/Berlin",
-  "schedule": ["after 10pm every weekday", "before 5am every weekday", "every weekend"],
-  "platform": "gitlab",
-  "gitAuthor": "Renovate Bot <bot@renovateapp.com>",
-  "onboarding": false,
-  "enabledManagers": ["gomod", "dockerfile", "gitlabci"],
+  "extends": [
+    "local>msteinert1/homeserver/tools/renovate-config"
+  ],
+  "enabledManagers": [
+    "gomod",
+    "dockerfile",
+    "gitlabci"
+  ],
   "gomod": {
-    "fileMatch": ["(^|/)go\\.mod$"]
+    "fileMatch": [
+      "(^|/)go\\.mod$"
+    ],
+    "postUpdateOptions": [
+      "gomodTidy"
+    ]
   },
   "dockerfile": {
-    "fileMatch": ["(^|/)Dockerfile$"]
+    "fileMatch": [
+      "(^|/)Dockerfile$"
+    ]
   },
   "gitlabci": {
-    "fileMatch": ["(^|/)\\.gitlab-ci\\.ya?ml$"]
+    "fileMatch": [
+      "(^|/)\\.gitlab-ci\\.ya?ml$"
+    ]
   },
   "packageRules": [
     {
-      "description": "Auto-merge patch updates after 3 days",
-      "matchUpdateTypes": ["patch"],
-      "minimumReleaseAge": "3 days",
-      "automerge": true,
-      "automergeType": "pr",
-      "automergeStrategy": "squash",
-      "labels": ["dependencies", "automerge"]
-    },
-    {
-      "description": "Auto-merge minor updates after 7 days",
-      "matchUpdateTypes": ["minor"],
-      "minimumReleaseAge": "7 days",
-      "automerge": true,
-      "automergeType": "pr",
-      "automergeStrategy": "squash",
-      "labels": ["dependencies", "automerge"]
-    },
-    {
-      "description": "Manual review for major updates",
-      "matchUpdateTypes": ["major"],
-      "automerge": false,
-      "labels": ["dependencies", "major-update"],
-      "reviewers": ["msteinert1"]
-    },
-    {
       "description": "Group Go dependencies",
-      "matchManagers": ["gomod"],
-      "groupName": "Go Dependencies",
-      "labels": ["go"]
-    },
-    {
-      "description": "Group Kubernetes client-go updates",
-      "matchPackagePatterns": ["k8s.io/.*"],
-      "groupName": "Kubernetes Libraries",
-      "labels": ["kubernetes"]
-    },
-    {
-      "description": "Container image updates",
-      "matchDatasources": ["docker"],
-      "commitMessageTopic": "container {{depName}}",
-      "labels": ["container-image"]
+      "matchManagers": [
+        "gomod"
+      ],
+      "groupName": "Go Dependencies"
     }
-  ],
-  "ignoreDeps": [],
-  "prConcurrentLimit": 5,
-  "prCreation": "immediate",
-  "prHourlyLimit": 0,
-  "branchPrefix": "renovate/",
-  "commitMessagePrefix": "chore(deps):",
-  "commitMessageAction": "Update",
-  "commitMessageExtra": "to {{newVersion}}",
-  "rebaseWhen": "behind-base-branch",
-  "labels": ["dependencies"],
-  "assignees": ["msteinert1"],
-  "reviewers": [],
-  "separateMajorMinor": true,
-  "separateMinorPatch": false,
-  "rangeStrategy": "auto",
-  "semanticCommits": "enabled",
-  "platformAutomerge": true,
-  "lockFileMaintenance": {
-    "enabled": true,
-    "schedule": ["before 5am on monday"]
-  },
-  "vulnerabilityAlerts": {
-    "enabled": true,
-    "labels": ["security"]
-  }
+  ]
 }

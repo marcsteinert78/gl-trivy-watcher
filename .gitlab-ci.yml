@@ -39,7 +39,7 @@ test:unit:
 
 test:lint:
   stage: test
-  image: golangci/golangci-lint:latest
+  image: golangci/golangci-lint:latest@sha256:67dfc9eeeb0eb13fc1a36329c2c378197dc561f1edf1a7792e3f771606bb0e15
   tags:
     - pve-local
   script:
@@ -152,7 +152,7 @@ govulncheck:
 build:container:
   stage: build
   image:
-    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug@sha256:c3109d5926a997b100c4343944e06c6b30a6804b2f9abe0994d3de6ef92b028e
     entrypoint: [""]
   tags:
     - pve-local
@@ -201,7 +201,7 @@ container_scanning:
 renovate:
   stage: dependencies
   image:
-    name: renovate/renovate:latest
+    name: renovate/renovate:latest@sha256:16becefb1b611b85c67a3b476ec6d0955a938409127827e5e2a9cf1ae160f217
     entrypoint: [""]
   tags:
     - pve-local

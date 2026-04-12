@@ -1,3 +1,6 @@
+include:
+  - component: $CI_SERVER_FQDN/msteinert1/ci-components/renovate@main
+
 stages:
   - test
   - security
@@ -194,29 +197,5 @@ container_scanning:
     - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
-# ============================================================================
-# Dependencies Stage (Scheduled)
-# ============================================================================
-
-renovate:
-  stage: dependencies
-  image:
-    name: renovate/renovate:latest@sha256:6f8f5b88c04d0cad564d9a707bf63a5712d4ae4a53ee3840a6eecbc51b7a7d24
-    entrypoint: [""]
-  tags:
-    - pve-local
-  variables:
-    # Use CI_PROJECT_PATH for portability between GitLab instances
-    RENOVATE_REPOSITORIES: '["${CI_PROJECT_PATH}"]'
-    RENOVATE_ENDPOINT: "${CI_API_V4_URL}"
-    RENOVATE_PLATFORM: "gitlab"
-    RENOVATE_GIT_AUTHOR: "Renovate Bot <bot@renovateapp.com>"
-    RENOVATE_AUTODISCOVER: "false"
-    RENOVATE_BASE_BRANCHES: "main"
-    LOG_LEVEL: "info"
-  script:
-    - renovate --platform=gitlab --token="${GITLAB_TOKEN}" --endpoint="${CI_API_V4_URL}"
-  rules:
-    - if: $SCHEMA_DRIFT_CHECK == "true"
-      when: never
-    - if: $CI_PIPELINE_SOURCE == "schedule"
+# Renovate job is provided via the ci-components/renovate@main include at
+# the top of this file — no inline definition needed.

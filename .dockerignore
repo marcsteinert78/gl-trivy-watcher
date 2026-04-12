@@ -1,0 +1,13 @@
+.git
+.gitignore
+.gitlab-ci.yml
+.dockerignore
+Dockerfile*
+README.md
+LICENSE
+*.md
+coverage.out
+*.test
+.vscode
+.idea
+renovate.json

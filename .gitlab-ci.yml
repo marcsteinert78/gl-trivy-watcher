@@ -1,81 +1,15 @@
 include:
-  - component: $CI_SERVER_FQDN/msteinert1/ci-components/renovate@main
+  - component: $CI_SERVER_FQDN/msteinert1/ci-components/go-pipeline@main
+    inputs:
+      build_path: "."
+      smoke_test_enabled: false
 
-stages:
-  - test
-  - security
-  - build
-  - container-security
-  - dependencies
-
-variables:
-  IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
-  IMAGE_LATEST: $CI_REGISTRY_IMAGE:latest
-  GO_VERSION: "1.25"
-  # Enable GitLab Advanced SAST (Ultimate feature)
-  # https://docs.gitlab.com/user/application_security/sast/gitlab_advanced_sast/
-  GITLAB_ADVANCED_SAST_ENABLED: "true"
-
-# ============================================================================
-# Test Stage
-# ============================================================================
-
-test:unit:
-  stage: test
-  image: golang:${GO_VERSION}  # Non-alpine for CGO/race support
-  tags:
-    - pve-local
-  script:
-    - go mod download
-    - go test -v -race -coverprofile=coverage.out ./...
-    - go tool cover -func=coverage.out
-  coverage: '/total:\s+\(statements\)\s+(\d+\.\d+)%/'
-  artifacts:
-    paths:
-      - coverage.out
-    expire_in: 7 days
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-      when: never
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-
-test:lint:
-  stage: test
-  image: golangci/golangci-lint:latest@sha256:67dfc9eeeb0eb13fc1a36329c2c378197dc561f1edf1a7792e3f771606bb0e15
-  tags:
-    - pve-local
-  script:
-    - golangci-lint run --timeout 5m
-  allow_failure: true
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-      when: never
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-
-test:build:
-  stage: test
-  image: golang:${GO_VERSION}-alpine
-  tags:
-    - pve-local
-  before_script:
-    - apk add --no-cache git
-  script:
-    - CGO_ENABLED=0 go build -ldflags="-w -s" -o /dev/null .
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-      when: never
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-
-# Scheduled job: re-fetch the upstream GitLab Container Scanning schema and
-# run the schema tests against the freshly downloaded version. Catches schema
-# drift even when nobody touches the code. Run via a scheduled pipeline with
-# variable SCHEMA_DRIFT_CHECK=true.
+# Schema drift test: re-fetch upstream GitLab Container Scanning schema
+# and verify compatibility. Runs via scheduled pipeline with
+# SCHEMA_DRIFT_CHECK=true.
 test:schema-drift:
   stage: test
-  image: golang:${GO_VERSION}
+  image: golang:1.25
   tags:
     - pve-local
   script:
@@ -86,116 +20,10 @@ test:schema-drift:
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule" && $SCHEMA_DRIFT_CHECK == "true"
 
-# ============================================================================
-# Security Stage
-# ============================================================================
-
-include:
-  - template: Security/SAST.gitlab-ci.yml
-  - template: Security/SAST-IaC.gitlab-ci.yml
-  - template: Security/Dependency-Scanning.gitlab-ci.yml
-  - template: Security/Secret-Detection.gitlab-ci.yml
-  - template: Security/Container-Scanning.gitlab-ci.yml
-
-# Override SAST to use correct tags and stage
-semgrep-sast:
-  stage: security
-  tags:
-    - pve-local
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-      when: never
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-
-# Override dependency scanning
-gemnasium-dependency_scanning:
-  stage: security
-  tags:
-    - pve-local
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-      when: never
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-
-# Override secret detection
-secret_detection:
-  stage: security
-  tags:
-    - pve-local
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-      when: never
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-
-# Go-specific vulnerability scanning
-govulncheck:
-  stage: security
-  image: golang:${GO_VERSION}-alpine
-  tags:
-    - pve-local
-  before_script:
-    - apk add --no-cache git
-    - go install golang.org/x/vuln/cmd/govulncheck@latest
-  script:
-    - govulncheck ./...
-  allow_failure: true
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-      when: never
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-
-# ============================================================================
-# Build Stage
-# ============================================================================
-
-build:container:
-  stage: build
-  image:
-    name: gcr.io/kaniko-project/executor:v1.23.2-debug@sha256:c3109d5926a997b100c4343944e06c6b30a6804b2f9abe0994d3de6ef92b028e
-    entrypoint: [""]
-  tags:
-    - pve-local
-  script:
-    - mkdir -p /kaniko/.docker
-    - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(printf "%s:%s" "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
-    - /kaniko/executor
-      --context "${CI_PROJECT_DIR}"
-      --dockerfile "${CI_PROJECT_DIR}/Dockerfile"
-      --destination "${IMAGE_TAG}"
-      --destination "${IMAGE_LATEST}"
-      --cache=true
-      --cache-repo="${CI_REGISTRY_IMAGE}/cache"
-      --cache-ttl=168h
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-      when: never
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      variables:
-        IMAGE_TAG: $CI_REGISTRY_IMAGE:mr-$CI_MERGE_REQUEST_IID
-  needs:
-    - job: test:unit
-    - job: test:build
-
-# ============================================================================
-# Container Security Stage
-# ============================================================================
-
+# Exclude schema drift check from container scanning schedule
 container_scanning:
-  stage: container-security
-  tags:
-    - pve-local
-  variables:
-    CS_IMAGE: $IMAGE_LATEST
   rules:
     - if: $SCHEMA_DRIFT_CHECK == "true"
       when: never
     - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-
-# Renovate job is provided via the ci-components/renovate@main include at
-# the top of this file — no inline definition needed.

@@ -269,6 +269,19 @@ func performNamespaceUploads(
 		} else {
 			tracker.MarkTriggered(m.namespace, m.hash)
 			uploadCount++
+
+			// Best-effort auto-resolve. Failures don't affect the upload
+			// success state — the upload is the authoritative operation.
+			if cfg.AutoResolveEnabled {
+				currentKeys := buildCurrentKeySet(m.vulns)
+				if _, err := resolveStaleFindings(cfg, m.project, m.namespace, currentKeys); err != nil {
+					slog.Warn("auto-resolve encountered error",
+						"namespace", m.namespace,
+						"project", m.project,
+						"error", err,
+					)
+				}
+			}
 		}
 	}
 

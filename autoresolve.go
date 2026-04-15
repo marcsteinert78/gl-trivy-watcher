@@ -15,28 +15,46 @@ import (
 // /projects/:id/vulnerabilities API response. We only parse fields relevant
 // for (a) identifying the CVE, (b) locating the workload, and (c) calling
 // the resolve endpoint.
+//
+// NOTE: In the list response, location and identifiers live UNDER a "finding"
+// sub-object, not at the top level. The top-level "location" field exists but
+// is always empty in the list view.
 type gitlabVulnerability struct {
-	ID         int    `json:"id"`
-	Severity   string `json:"severity"`
-	State      string `json:"state"`
-	ReportType string `json:"report_type"`
-	Location   struct {
-		Image      string `json:"image"`
-		Dependency struct {
-			Package struct {
-				Name string `json:"name"`
-			} `json:"package"`
-		} `json:"dependency"`
-		KubernetesResource struct {
-			Namespace     string `json:"namespace"`
-			ContainerName string `json:"container_name"`
-		} `json:"kubernetes_resource"`
-	} `json:"location"`
-	Identifiers []struct {
-		ExternalID string `json:"external_id"`
-		Name       string `json:"name"`
-		Type       string `json:"type"`
-	} `json:"identifiers"`
+	ID         int             `json:"id"`
+	Severity   string          `json:"severity"`
+	State      string          `json:"state"`
+	ReportType string          `json:"report_type"`
+	Finding    gitlabFinding   `json:"finding"`
+}
+
+// gitlabFinding is the nested "finding" object containing the actual
+// location and identifier data we match against.
+type gitlabFinding struct {
+	Location gitlabLocation `json:"location"`
+	// Some findings expose identifiers inside a nested "primary_identifier"
+	// plus an array. To keep things simple we also parse identifiers from
+	// the raw_metadata as a fallback when the typed fields are empty.
+	RawMetadata string `json:"raw_metadata"`
+	Name        string `json:"name"`
+}
+
+type gitlabLocation struct {
+	Image      string             `json:"image"`
+	Dependency gitlabDependency   `json:"dependency"`
+	Kubernetes gitlabKubeResource `json:"kubernetes_resource"`
+}
+
+type gitlabDependency struct {
+	Package gitlabPackage `json:"package"`
+}
+
+type gitlabPackage struct {
+	Name string `json:"name"`
+}
+
+type gitlabKubeResource struct {
+	Namespace     string `json:"namespace"`
+	ContainerName string `json:"container_name"`
 }
 
 // stalenessKey is the logical identity we use to compare current scan findings
@@ -97,19 +115,35 @@ func imageRepoWithoutTag(image string) string {
 	return image
 }
 
-// cveFromIdentifiers returns the first CVE identifier from the GitLab API
-// vulnerability shape (slightly different field names than our own type).
-func cveFromIdentifiers(ids []struct {
-	ExternalID string `json:"external_id"`
-	Name       string `json:"name"`
-	Type       string `json:"type"`
-}) string {
-	for _, id := range ids {
-		if strings.EqualFold(id.Type, "cve") {
-			if id.ExternalID != "" {
-				return id.ExternalID
+// cveFromGitLabVuln extracts the CVE name. GitLab returns the CVE either in
+// the top-level "title" or inside finding.raw_metadata; we prefer the title
+// since it's already plain text (e.g. "CVE-2026-0968"). If the title isn't a
+// CVE-id, we parse raw_metadata for the first "cve" identifier.
+func cveFromGitLabVuln(v gitlabVulnerability) string {
+	// The title field is the most reliable — GitLab sets it to the CVE ID
+	// for cluster_image_scanning findings.
+	if strings.HasPrefix(v.Finding.Name, "CVE-") {
+		return v.Finding.Name
+	}
+	// Fallback: parse the raw_metadata JSON blob for the first CVE
+	// identifier. raw_metadata is always set for cluster_image_scanning.
+	if v.Finding.RawMetadata != "" {
+		var rm struct {
+			Identifiers []struct {
+				Type  string `json:"type"`
+				Name  string `json:"name"`
+				Value string `json:"value"`
+			} `json:"identifiers"`
+		}
+		if err := json.Unmarshal([]byte(v.Finding.RawMetadata), &rm); err == nil {
+			for _, id := range rm.Identifiers {
+				if strings.EqualFold(id.Type, "cve") {
+					if id.Value != "" {
+						return id.Value
+					}
+					return id.Name
+				}
 			}
-			return id.Name
 		}
 	}
 	return ""
@@ -118,16 +152,16 @@ func cveFromIdentifiers(ids []struct {
 // stalenessKeyFromGitLab builds the comparison key for a GitLab vulnerability.
 // Returns ok=false if essential fields are missing (CVE, container, package).
 func stalenessKeyFromGitLab(v gitlabVulnerability) (stalenessKey, bool) {
-	cve := cveFromIdentifiers(v.Identifiers)
+	cve := cveFromGitLabVuln(v)
 	if cve == "" {
 		return stalenessKey{}, false
 	}
 	k := stalenessKey{
 		CVE:       cve,
-		Namespace: v.Location.KubernetesResource.Namespace,
-		Container: v.Location.KubernetesResource.ContainerName,
-		Package:   v.Location.Dependency.Package.Name,
-		ImageRepo: imageRepoWithoutTag(v.Location.Image),
+		Namespace: v.Finding.Location.Kubernetes.Namespace,
+		Container: v.Finding.Location.Kubernetes.ContainerName,
+		Package:   v.Finding.Location.Dependency.Package.Name,
+		ImageRepo: imageRepoWithoutTag(v.Finding.Location.Image),
 	}
 	if k.Container == "" || k.Package == "" {
 		return stalenessKey{}, false
@@ -167,7 +201,7 @@ func resolveStaleFindings(cfg Config, project string, namespace string, currentK
 		// Only touch findings belonging to the namespace we just scanned.
 		// Each namespace upload should not affect another namespace's
 		// findings, even if they happen to share the same project.
-		if v.Location.KubernetesResource.Namespace != namespace {
+		if v.Finding.Location.Kubernetes.Namespace != namespace {
 			skippedOtherNS++
 			continue
 		}
@@ -216,10 +250,10 @@ func resolveStaleFindings(cfg Config, project string, namespace string, currentK
 			slog.Info("auto-resolve: would resolve (dry-run)",
 				"project", project,
 				"vulnerability_id", v.ID,
-				"cve", cveFromIdentifiers(v.Identifiers),
-				"image", v.Location.Image,
-				"container", v.Location.KubernetesResource.ContainerName,
-				"package", v.Location.Dependency.Package.Name,
+				"cve", cveFromGitLabVuln(v),
+				"image", v.Finding.Location.Image,
+				"container", v.Finding.Location.Kubernetes.ContainerName,
+				"package", v.Finding.Location.Dependency.Package.Name,
 			)
 		}
 		return len(stale), nil

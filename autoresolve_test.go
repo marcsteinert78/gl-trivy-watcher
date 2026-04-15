@@ -29,6 +29,49 @@ func TestImageRepoWithoutTag(t *testing.T) {
 	}
 }
 
+func TestCVEFromGitLabVuln(t *testing.T) {
+	t.Run("from title", func(t *testing.T) {
+		v := makeGitLabVuln(1, "CVE-2026-0968", "img:v1", "ns", "c", "p")
+		if got := cveFromGitLabVuln(v); got != "CVE-2026-0968" {
+			t.Errorf("got %q, want CVE-2026-0968", got)
+		}
+	})
+	t.Run("from raw_metadata when title empty", func(t *testing.T) {
+		v := makeGitLabVuln(1, "", "img:v1", "ns", "c", "p")
+		v.Finding.RawMetadata = `{"identifiers":[{"type":"cwe","name":"CWE-20"},{"type":"cve","value":"CVE-2026-1234"}]}`
+		if got := cveFromGitLabVuln(v); got != "CVE-2026-1234" {
+			t.Errorf("got %q, want CVE-2026-1234", got)
+		}
+	})
+	t.Run("raw_metadata uses name when value missing", func(t *testing.T) {
+		v := makeGitLabVuln(1, "", "img:v1", "ns", "c", "p")
+		v.Finding.RawMetadata = `{"identifiers":[{"type":"cve","name":"CVE-FALLBACK"}]}`
+		if got := cveFromGitLabVuln(v); got != "CVE-FALLBACK" {
+			t.Errorf("got %q, want CVE-FALLBACK", got)
+		}
+	})
+	t.Run("malformed raw_metadata returns empty", func(t *testing.T) {
+		v := makeGitLabVuln(1, "", "img:v1", "ns", "c", "p")
+		v.Finding.RawMetadata = `{not json`
+		if got := cveFromGitLabVuln(v); got != "" {
+			t.Errorf("got %q, want empty (malformed json)", got)
+		}
+	})
+	t.Run("no identifiers returns empty", func(t *testing.T) {
+		v := makeGitLabVuln(1, "", "img:v1", "ns", "c", "p")
+		v.Finding.RawMetadata = `{"identifiers":[{"type":"cwe","name":"CWE-20"}]}`
+		if got := cveFromGitLabVuln(v); got != "" {
+			t.Errorf("got %q, want empty (no cve identifier)", got)
+		}
+	})
+	t.Run("empty inputs returns empty", func(t *testing.T) {
+		v := makeGitLabVuln(1, "", "", "", "", "")
+		if got := cveFromGitLabVuln(v); got != "" {
+			t.Errorf("got %q, want empty", got)
+		}
+	})
+}
+
 func TestFirstCVE(t *testing.T) {
 	ids := []Ident{
 		{Type: "cwe", Name: "CWE-20"},
@@ -89,19 +132,7 @@ func TestBuildCurrentKeySet(t *testing.T) {
 
 func TestStalenessKeyFromGitLab(t *testing.T) {
 	t.Run("complete vuln", func(t *testing.T) {
-		v := gitlabVulnerability{
-			Identifiers: []struct {
-				ExternalID string `json:"external_id"`
-				Name       string `json:"name"`
-				Type       string `json:"type"`
-			}{
-				{ExternalID: "CVE-1", Name: "CVE-1", Type: "cve"},
-			},
-		}
-		v.Location.Image = "paperless-ngx/paperless-ngx:2.20.7"
-		v.Location.KubernetesResource.Namespace = "paperless"
-		v.Location.KubernetesResource.ContainerName = "ngx"
-		v.Location.Dependency.Package.Name = "libssh-4"
+		v := makeGitLabVuln(1, "CVE-1", "paperless-ngx/paperless-ngx:2.20.7", "paperless", "ngx", "libssh-4")
 
 		k, ok := stalenessKeyFromGitLab(v)
 		if !ok {
@@ -120,25 +151,14 @@ func TestStalenessKeyFromGitLab(t *testing.T) {
 	})
 
 	t.Run("missing package - skip", func(t *testing.T) {
-		v := gitlabVulnerability{
-			Identifiers: []struct {
-				ExternalID string `json:"external_id"`
-				Name       string `json:"name"`
-				Type       string `json:"type"`
-			}{
-				{ExternalID: "CVE-1", Type: "cve"},
-			},
-		}
-		v.Location.KubernetesResource.ContainerName = "ngx"
+		v := makeGitLabVuln(1, "CVE-1", "img:v1", "ns", "ngx", "")
 		if _, ok := stalenessKeyFromGitLab(v); ok {
 			t.Error("expected ok=false for missing package")
 		}
 	})
 
 	t.Run("missing cve - skip", func(t *testing.T) {
-		v := gitlabVulnerability{}
-		v.Location.KubernetesResource.ContainerName = "ngx"
-		v.Location.Dependency.Package.Name = "libc"
+		v := makeGitLabVuln(1, "", "img:v1", "ns", "ngx", "libc")
 		if _, ok := stalenessKeyFromGitLab(v); ok {
 			t.Error("expected ok=false for missing CVE")
 		}
@@ -166,17 +186,7 @@ func TestStalenessIgnoresImageTag(t *testing.T) {
 	currentSet := buildCurrentKeySet(current)
 
 	// GitLab still has a finding for the same CVE on the OLD tag.
-	oldFinding := gitlabVulnerability{
-		Identifiers: []struct {
-			ExternalID string `json:"external_id"`
-			Name       string `json:"name"`
-			Type       string `json:"type"`
-		}{{ExternalID: "CVE-X", Type: "cve"}},
-	}
-	oldFinding.Location.Image = "paperless-ngx/paperless-ngx:2.20.7"
-	oldFinding.Location.KubernetesResource.Namespace = "paperless"
-	oldFinding.Location.KubernetesResource.ContainerName = "ngx"
-	oldFinding.Location.Dependency.Package.Name = "libc6"
+	oldFinding := makeGitLabVuln(1, "CVE-X", "paperless-ngx/paperless-ngx:2.20.7", "paperless", "ngx", "libc6")
 
 	k, _ := stalenessKeyFromGitLab(oldFinding)
 	if _, stillPresent := currentSet[k]; !stillPresent {
@@ -185,22 +195,18 @@ func TestStalenessIgnoresImageTag(t *testing.T) {
 }
 
 // makeGitLabVuln is a concise helper for constructing test vulnerabilities
-// against the awkward inline struct fields on gitlabVulnerability.
+// matching the actual GitLab API response shape (finding.location nested).
 func makeGitLabVuln(id int, cve, image, ns, container, pkg string) gitlabVulnerability {
 	v := gitlabVulnerability{
 		ID:         id,
 		State:      "detected",
 		ReportType: "cluster_image_scanning",
-		Identifiers: []struct {
-			ExternalID string `json:"external_id"`
-			Name       string `json:"name"`
-			Type       string `json:"type"`
-		}{{ExternalID: cve, Type: "cve"}},
 	}
-	v.Location.Image = image
-	v.Location.KubernetesResource.Namespace = ns
-	v.Location.KubernetesResource.ContainerName = container
-	v.Location.Dependency.Package.Name = pkg
+	v.Finding.Name = cve
+	v.Finding.Location.Image = image
+	v.Finding.Location.Kubernetes.Namespace = ns
+	v.Finding.Location.Kubernetes.ContainerName = container
+	v.Finding.Location.Dependency.Package.Name = pkg
 	return v
 }
 
@@ -497,16 +503,7 @@ func TestStalenessNotMatchedWhenContainerDiffers(t *testing.T) {
 	currentSet := buildCurrentKeySet(current)
 
 	// Same CVE but in a different container (gotenberg).
-	other := gitlabVulnerability{
-		Identifiers: []struct {
-			ExternalID string `json:"external_id"`
-			Name       string `json:"name"`
-			Type       string `json:"type"`
-		}{{ExternalID: "CVE-X", Type: "cve"}},
-	}
-	other.Location.KubernetesResource.Namespace = "paperless"
-	other.Location.KubernetesResource.ContainerName = "gotenberg"
-	other.Location.Dependency.Package.Name = "libc6"
+	other := makeGitLabVuln(1, "CVE-X", "", "paperless", "gotenberg", "libc6")
 
 	k, _ := stalenessKeyFromGitLab(other)
 	if _, present := currentSet[k]; present {

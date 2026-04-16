@@ -381,9 +381,93 @@ GITLAB_ACCESS_TOKEN=glpat-xxx  # Group Access Token with api scope
    - For true isolation, use separate GitLab groups per team
    - Consolidated report (default project) contains all unmatched namespaces
 
-### Future Enhancements
+## Auto-Resolve Stale Vulnerabilities
+
+### Problem Statement
+
+GitLab's cluster_image_scanning dashboard treats each `(CVE, image-tag, location)` tuple as a distinct finding and never removes entries on its own. Upgrading an image from `app:2.20.7` to `app:2.20.14` does not close the 2.20.7 findings — they remain `state=detected` forever, while the new tag adds its own. After a few months of routine patching the Ultimate dashboard's Critical count is several multiples of the cluster's actual state, which defeats the point of having a dashboard.
+
+There is no server-side setting to fix this. The only supported approach is to explicitly resolve each stale finding via the API.
+
+### Design
+
+After a successful namespace upload, the watcher:
+
+1. Fetches all `state=detected` vulnerabilities for the target project from `GET /projects/:id/vulnerabilities?state=detected` (paginated).
+2. Filters to `report_type=cluster_image_scanning` in the namespace that was just uploaded. Findings from other namespaces or other scan types are ignored, even when they share the same project.
+3. Builds a comparison key for every remaining finding and checks whether that key is present in the current cluster scan.
+4. For findings not present in the current scan, calls `POST /vulnerabilities/:id/resolve` — a **top-level** endpoint, not nested under `/projects/:id`. Vulnerability IDs are globally unique in GitLab, so the project-scoped path returns 404.
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  After namespace upload for "paperless":                         │
+│                                                                  │
+│  1. List detected vulns in project                               │
+│     └─▶ 537 findings (accumulated from months of image bumps)    │
+│                                                                  │
+│  2. Filter: report_type=cluster_image_scanning                   │
+│             namespace=paperless (skip other namespaces)          │
+│     └─▶ 270 candidates                                           │
+│                                                                  │
+│  3. For each: build key, check against current scan set          │
+│     └─▶ 270 not found in current scan → stale                    │
+│                                                                  │
+│  4. Safety cap? (270 < 500)                                      │
+│     └─▶ proceed                                                  │
+│                                                                  │
+│  5. For each stale: POST /vulnerabilities/:id/resolve            │
+│     └─▶ resolved=270, failed=0                                   │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### Matching Key
+
+```go
+type stalenessKey struct {
+    CVE       string
+    Namespace string
+    Container string
+    Package   string
+    ImageRepo string  // image reference WITHOUT :tag
+}
+```
+
+**Why the tag is excluded**: image bumps are the primary driver of staleness. If `app:2.20.7` had a CVE in `libssl` and we redeploy `app:2.20.14` without that CVE, we want the 2.20.7 finding to resolve even though the new scan's image string is different. Including the tag in the key would make auto-resolve useless for its main use case.
+
+**Why `ImageRepo` is still included**: protects against resolving an unrelated finding that coincidentally shares (CVE, namespace, container, package) with the current scan. It's a rare edge case — containers usually keep the same image repo across upgrades — but keeping it costs nothing.
+
+**Why the namespace is part of the key**: the same container name can exist in different namespaces (e.g. `prometheus` in `monitoring` and in a tenant namespace). We only want to reconcile findings the current upload is authoritative for.
+
+### GitLab API Quirk: Nested Location
+
+The GitLab `/projects/:id/vulnerabilities` list response has a top-level `location` field, but it is always empty. The real location and identifier data live under `finding.location` and `finding.raw_metadata` in the same object. The watcher parses the nested path; matching against the top-level field silently matches nothing (skipped_unparseable would be 0 but skipped_other_ns would include every finding).
+
+### Safety Guards
+
+1. **Dry-run default** (`AUTO_RESOLVE_DRY_RUN=true`) — logs every candidate with CVE, container, package, and image, without calling the resolve endpoint. First deployment should always run in dry-run until the logs look right.
+2. **Per-namespace cap** (`AUTO_RESOLVE_MAX_PER_RUN=500`) — aborts the run for that namespace if the stale count exceeds the cap. A bug that computed keys wrongly, or a Trivy outage that produced an empty scan, could otherwise wipe the entire dashboard. The cap is per namespace, so one misbehaving upload can't poison other namespaces' reconciliation.
+3. **Scoped to cluster_image_scanning** — other scan types (e.g. `container_scanning` from a CI build) have different resolution semantics and are explicitly skipped.
+4. **Scoped to the just-uploaded namespace** — a project receiving uploads from multiple namespaces (unusual but possible via the default-project fallback) only reconciles the namespace that was just uploaded; others remain untouched until their own upload cycle runs.
+5. **Idempotent** — `POST /vulnerabilities/:id/resolve` on an already-resolved vulnerability returns 200. No special handling needed for races or retries.
+
+### Rollout Sequence
+
+The feature is designed for a two-phase rollout:
+
+| Phase | Settings | Purpose |
+|-------|----------|---------|
+| 1 (observe) | `AUTO_RESOLVE_ENABLED=true`, `AUTO_RESOLVE_DRY_RUN=true` | Log candidates; verify matching logic against real data |
+| 2 (act)     | `AUTO_RESOLVE_ENABLED=true`, `AUTO_RESOLVE_DRY_RUN=false` | Actually resolve stale findings |
+
+Re-detection is automatic: if the cluster scan surfaces the CVE again later, GitLab re-opens it. Resolving isn't destructive.
+
+### Token Requirements
+
+The resolve endpoint uses the same `GITLAB_ACCESS_TOKEN` (PAT or Group Access Token with `api` scope) that's already needed for pipeline triggers. No additional scopes required.
+
+## Future Enhancements
 
 1. **Namespace Labels**: Filter which namespaces to process via label selector
 2. **Severity Thresholds**: Only upload vulnerabilities above certain severity
 3. **Webhook Mode**: React to VulnerabilityReport changes instead of polling
-4. **Metrics Endpoint**: Expose Prometheus metrics for monitoring
+4. **Metrics Endpoint**: Expose Prometheus metrics for monitoring, including auto-resolve counters (resolved/failed per namespace)

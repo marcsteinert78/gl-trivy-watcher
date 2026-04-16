@@ -4,6 +4,8 @@ Bridges [Trivy Operator](https://github.com/aquasecurity/trivy-operator) and the
 
 It runs as a small in-cluster controller that polls `VulnerabilityReport` CRs, groups findings by namespace, converts them to GitLab's [Container Scanning report format](https://docs.gitlab.com/ee/user/application_security/container_scanning/), and triggers a CI pipeline in the matching GitLab project. The pipeline picks the report up as an artifact, which makes it appear on the project's Security Dashboard.
 
+Optionally, the watcher also **auto-resolves stale findings** in GitLab: after each upload it reconciles the project's `detected` vulnerabilities against the current scan and marks anything that no longer shows up as `resolved`. Without this, GitLab accumulates old findings forever (image bumps produce new CVEs but the old tag's CVEs stay `detected`), so the Ultimate dashboard counts drift further from reality with every release. See [Auto-resolve stale findings](#auto-resolve-stale-findings).
+
 > **Note:** This project is AI-assisted (Claude) under human review. See [LICENSE](LICENSE) (Apache-2.0).
 
 ## Why you might want this
@@ -65,6 +67,9 @@ For every namespace, the watcher resolves which GitLab project should receive it
 | `MIN_TRIGGER_GAP` | `5m` | Minimum time between triggers for the same project |
 | `CACHE_TTL` | `5m` | Project-existence and namespace-annotation cache TTL |
 | `HEALTH_ADDR` | `:8080` | Listen address for `/healthz` liveness probe |
+| `AUTO_RESOLVE_ENABLED` | `false` | Enable auto-resolution of stale GitLab findings after each upload |
+| `AUTO_RESOLVE_DRY_RUN` | `true` | Log what would be resolved without calling the GitLab resolve API |
+| `AUTO_RESOLVE_MAX_PER_RUN` | `500` | Per-namespace safety cap; aborts the run if exceeded |
 
 ## Token setup
 
@@ -72,10 +77,10 @@ For every namespace, the watcher resolves which GitLab project should receive it
    - Name: `trivy-watcher`
    - Scopes: `write_package_registry` only
    - Note the username (e.g., `gitlab+deploy-token-12345`)
-2. **Group or Project Access Token** (Settings → Access Tokens) — used to trigger pipelines and check project existence
+2. **Group or Project Access Token** (Settings → Access Tokens) — used to trigger pipelines, check project existence, and (if enabled) resolve stale vulnerabilities
    - Scope: `api`
 
-Group-level tokens work across all child projects, which is what you usually want.
+Group-level tokens work across all child projects, which is what you usually want. The `api` scope also covers the vulnerability-resolve endpoint used by auto-resolve — no extra scope needed.
 
 ## Required RBAC
 
@@ -108,6 +113,27 @@ trivy:cluster-scan:
   rules:
     - if: $TRIVY_TRIGGERED == "true"
 ```
+
+## Auto-resolve stale findings
+
+GitLab doesn't clean up container-scanning findings when an image is upgraded: the new tag produces new CVE entries, but the old tag's entries stay `detected` forever. Over time the Security Dashboard counts drift arbitrarily far from the cluster's actual state. The watcher closes this gap by calling GitLab's resolve API after each successful namespace upload.
+
+**Matching key** — a finding is considered "stale" (and will be resolved) when it is not present in the just-uploaded report under the same `(CVE, namespace, container, package, image-repo-without-tag)` tuple. The image tag is deliberately excluded so `app:2.20.7 → app:2.20.14` resolves the old tag's CVEs even though the literal image reference changed.
+
+**Scope** — only findings with `report_type=cluster_image_scanning` and `state=detected` in the namespace that was just uploaded are considered. Findings from other namespaces or other scan types are never touched, even when they happen to share the same GitLab project.
+
+**Safety guards**:
+- `AUTO_RESOLVE_DRY_RUN=true` (default) logs what would be resolved without calling the API — run this for a few cycles and verify the candidates look right before flipping to `false`.
+- `AUTO_RESOLVE_MAX_PER_RUN=500` (default) aborts the run for that namespace if more than N stale findings are identified in a single cycle. This is a brake against a bug or misconfiguration wiping the dashboard in one go.
+- A CVE that reappears in a later scan is re-detected by GitLab automatically — resolving is not a one-way gate.
+
+**Required token scope**: `api` on `GITLAB_ACCESS_TOKEN` (same token the watcher already uses for pipeline triggers). The resolve endpoint is `POST /vulnerabilities/:id/resolve` — a **top-level** GitLab API path, not nested under `/projects/:id`.
+
+Recommended rollout:
+
+1. Deploy with `AUTO_RESOLVE_ENABLED=true`, `AUTO_RESOLVE_DRY_RUN=true`.
+2. Watch the logs for `auto-resolve: would resolve (dry-run)` lines. Confirm the CVEs, containers, and packages look like genuinely superseded findings.
+3. Flip `AUTO_RESOLVE_DRY_RUN=false` once the dry-run output is clean.
 
 ## Health endpoint
 

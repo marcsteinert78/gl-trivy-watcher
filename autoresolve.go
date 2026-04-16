@@ -337,10 +337,14 @@ func listDetectedVulnerabilities(cfg Config, project string) ([]gitlabVulnerabil
 }
 
 // resolveVulnerability calls the GitLab vulnerability resolution endpoint.
+// The resolve action lives at the TOP-LEVEL /vulnerabilities/:id/resolve —
+// NOT nested under /projects/:id. Vulnerability IDs are globally unique in
+// GitLab, so the project-scoped path returns 404.
 // This is idempotent — calling it on an already-resolved vuln returns 200.
 func resolveVulnerability(cfg Config, project string, vulnerabilityID int) error {
-	u := fmt.Sprintf("%s/projects/%s/vulnerabilities/%d/resolve",
-		cfg.GitLabAPIURL, url.PathEscape(project), vulnerabilityID)
+	_ = project // kept in signature for logging/audit parity; path is global
+	u := fmt.Sprintf("%s/vulnerabilities/%d/resolve",
+		cfg.GitLabAPIURL, vulnerabilityID)
 
 	req, err := http.NewRequest("POST", u, bytes.NewReader(nil))
 	if err != nil {

@@ -112,6 +112,12 @@ func processVulnerabilityReports(
 				"new_hash", globalHash,
 			)
 		}
+		// After every content change we restart the stability window. Log it
+		// explicitly so operators can see "we noticed, now we're waiting X
+		// before doing anything" instead of staring at silence.
+		slog.Info("stability timer (re)started",
+			"wait_for", cfg.StabilizeTime,
+		)
 		return true
 	}
 

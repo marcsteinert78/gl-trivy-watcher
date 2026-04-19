@@ -10,24 +10,28 @@ import (
 	"time"
 )
 
-// Health tracks watcher liveness. The watcher loop calls MarkPoll after every
-// successful poll cycle; the /healthz handler reports unhealthy if no poll has
-// completed within staleAfter, which catches a hung k8s client or a deadlocked
-// loop. Readiness is intentionally absent — nothing routes traffic to this pod.
+// Health tracks watcher process liveness via a heartbeat. A background
+// goroutine in runWatcher calls MarkPoll() on a fixed cadence regardless
+// of what the polling/upload loop is doing — so the /healthz endpoint
+// stays green during long upload + auto-resolve cycles (which can take
+// minutes when the cluster has many namespaces).
+//
+// MarkPoll is the legacy name; semantically it's now "heartbeat tick".
+// Readiness is intentionally absent — nothing routes traffic here.
 type Health struct {
 	lastPoll   atomic.Int64 // unix nanos
 	staleAfter time.Duration
 }
 
 // NewHealth creates a Health tracker. staleAfter should be a small multiple of
-// the poll interval so a single missed tick doesn't trip the probe.
+// the heartbeat interval so a single missed tick doesn't trip the probe.
 func NewHealth(staleAfter time.Duration) *Health {
 	h := &Health{staleAfter: staleAfter}
 	h.MarkPoll()
 	return h
 }
 
-// MarkPoll records that a poll cycle completed successfully.
+// MarkPoll records a heartbeat tick.
 func (h *Health) MarkPoll() {
 	h.lastPoll.Store(time.Now().UnixNano())
 }

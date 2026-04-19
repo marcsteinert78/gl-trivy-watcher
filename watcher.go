@@ -44,6 +44,25 @@ func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config, healt
 		"min_trigger_gap", cfg.MinTriggerGap,
 	)
 
+	// Heartbeat goroutine — decoupled from the polling/upload loop so the
+	// liveness probe stays green even when a single iteration takes minutes
+	// (e.g. auto-resolve across all namespaces). Without this, long upload
+	// cycles starve health.MarkPoll() and kubelet kills the pod mid-work.
+	if health != nil {
+		go func() {
+			t := time.NewTicker(cfg.PollInterval)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					health.MarkPoll()
+				}
+			}
+		}()
+	}
+
 	ticker := time.NewTicker(cfg.PollInterval)
 	defer ticker.Stop()
 
@@ -54,11 +73,7 @@ func runWatcher(ctx context.Context, client dynamic.Interface, cfg Config, healt
 			return
 		case <-ticker.C:
 			pollCount++
-			if processVulnerabilityReports(ctx, client, vulnGVR, resolver, tracker, cfg, pollCount) {
-				if health != nil {
-					health.MarkPoll()
-				}
-			}
+			processVulnerabilityReports(ctx, client, vulnGVR, resolver, tracker, cfg, pollCount)
 		}
 	}
 }

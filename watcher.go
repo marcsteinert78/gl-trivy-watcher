@@ -80,9 +80,15 @@ func processVulnerabilityReports(
 	}
 
 	if len(reports.Items) == 0 {
-		// Heartbeat every 6 polls (~1 min at 10s interval)
+		// Heartbeat every 6 polls (~1 min at 10s interval). Reuses the same
+		// "watching cluster" label as the populated case so operators see a
+		// uniform heartbeat — the count fields show whether the cluster has
+		// scans yet, no implicit alarm.
 		if pollCount%6 == 0 {
-			slog.Info("no vulnerability reports found in cluster")
+			slog.Info("watching cluster",
+				"current_reports", 0,
+				"current_vulnerabilities", 0,
+			)
 		}
 		return true
 	}
@@ -100,14 +106,14 @@ func processVulnerabilityReports(
 	if changed {
 		if oldHash == "" {
 			slog.Info("initial scan",
-				"reports", len(reports.Items),
-				"vulnerabilities", totalVulns,
+				"current_reports", len(reports.Items),
+				"current_vulnerabilities", totalVulns,
 				"hash", globalHash,
 			)
 		} else {
 			slog.Info("content changed",
-				"reports", len(reports.Items),
-				"vulnerabilities", totalVulns,
+				"new_reports", len(reports.Items),
+				"new_vulnerabilities", totalVulns,
 				"old_hash", oldHash,
 				"new_hash", globalHash,
 			)
@@ -132,8 +138,8 @@ func processVulnerabilityReports(
 		// Heartbeat every 6 polls when idle
 		if pollCount%6 == 0 {
 			slog.Info("watching cluster",
-				"reports", len(reports.Items),
-				"vulnerabilities", totalVulns,
+				"current_reports", len(reports.Items),
+				"current_vulnerabilities", totalVulns,
 			)
 		}
 		return true
@@ -147,8 +153,8 @@ func processVulnerabilityReports(
 	// Step 6: Content stable - now split by namespace and upload
 	slog.Info("processing uploads",
 		"stable_for", stableFor.Round(time.Second),
-		"reports", len(reports.Items),
-		"vulnerabilities", totalVulns,
+		"current_reports", len(reports.Items),
+		"current_vulnerabilities", totalVulns,
 	)
 
 	byNamespace := groupByNamespace(reports.Items)

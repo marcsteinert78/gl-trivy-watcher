@@ -27,3 +27,29 @@ container_scanning:
       when: never
     - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# After build, push the freshly built image through the central image-mirror
+# pipeline so it ends up in `private-registry/mirror/internal/trivy-watcher`
+# (publicly pullable). Same scan/sign gate as upstream mirror entries; lets
+# workloads pull anonymously — no per-namespace pull-secret config required.
+#
+# Uses GitLab multi-project pipeline trigger via `trigger:` keyword. Auth is
+# automatic ($CI_JOB_TOKEN) — image-mirror's `Settings → CI/CD → Token Access`
+# must list this project as an allowed source (one-time setup, no token in CI
+# variables).
+trigger:image-mirror:
+  stage: container-security
+  needs:
+    - job: build:container
+  variables:
+    # Path-only form (image-mirror prepends $CI_REGISTRY/).
+    TRIGGER_IMAGE: "${CI_PROJECT_PATH}:${CI_COMMIT_SHORT_SHA}"
+  trigger:
+    project: msteinert1/homeserver/tools/image-mirror
+    branch: main
+    # `depend` makes this job inherit the downstream pipeline status —
+    # if the mirror pipeline fails (scan rejection, push error), this
+    # job goes red too, so the source pipeline reflects supply-chain health.
+    strategy: depend
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

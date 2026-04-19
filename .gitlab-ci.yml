@@ -27,3 +27,37 @@ container_scanning:
       when: never
     - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# After build, push the freshly built image through the central image-mirror
+# pipeline so it ends up in `private-registry/mirror/internal/trivy-watcher`
+# (publicly pullable). That keeps the supply-chain gate (scan + Cosign sign,
+# once Phase 5 lands) consistent with upstream mirrors and lets workloads
+# pull anonymously — no per-namespace pull-secret config required.
+trigger:image-mirror:
+  stage: container-security
+  image:
+    name: registry.k8s.marc-steinert.de/private-registry/mirror/dhi/curl:latest
+  tags:
+    - pve-local
+  needs:
+    - job: build:container
+  variables:
+    # The mirror pipeline strips $CI_REGISTRY/ from the source — pass the
+    # path-only form (project_path/image:tag).
+    SOURCE: "${CI_PROJECT_PATH}:${CI_COMMIT_SHORT_SHA}"
+  script:
+    - |
+      set -e
+      [ -n "${IMAGE_MIRROR_TRIGGER_TOKEN:-}" ] || { echo "IMAGE_MIRROR_TRIGGER_TOKEN CI variable not set"; exit 1; }
+      echo "Triggering image-mirror pipeline for ${SOURCE}"
+      curl --fail --silent --show-error \
+        --request POST \
+        --form "token=${IMAGE_MIRROR_TRIGGER_TOKEN}" \
+        --form "ref=main" \
+        --form "variables[TRIGGER_IMAGE]=${SOURCE}" \
+        "${CI_API_V4_URL}/projects/260/trigger/pipeline" \
+        | tee trigger-response.json
+      WEB_URL=$(grep -oE '"web_url":"[^"]+"' trigger-response.json | head -1 | sed 's/"web_url":"\(.*\)"/\1/')
+      echo "Triggered: ${WEB_URL}"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

@@ -3,6 +3,13 @@ include:
     inputs:
       build_path: "."
       smoke_test_enabled: false
+  # Cosign-sign the image at the project registry with the Vault Transit
+  # key before mirror-trigger fires. Gives verify-image-signatures
+  # coverage for direct pulls of
+  #   registry.k8s.marc-steinert.de/msteinert1/homeserver/tools/trivy-watcher
+  # The mirror path gets its own signature later from mirror-internal.sh
+  # in the image-mirror pipeline.
+  - component: $CI_SERVER_FQDN/msteinert1/ci-components/cosign-sign@main
   # After build, mirror the image to `mirror/internal/trivy-watcher` via
   # the central image-mirror pipeline. See the component for prereqs.
   - component: $CI_SERVER_FQDN/msteinert1/ci-components/mirror-internal-trigger@main

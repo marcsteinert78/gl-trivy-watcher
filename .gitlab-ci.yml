@@ -14,6 +14,10 @@ include:
   # the central image-mirror pipeline. See the component for prereqs.
   - component: $CI_SERVER_FQDN/msteinert1/ci-components/mirror-internal-trigger@main
 
+  # Periodically check upstream gomod / dockerfile / gitlabci dependencies
+  # for updates and surface them via the dependency dashboard issue.
+  - component: $CI_SERVER_FQDN/msteinert1/ci-components/renovate@main
+
 # Schema drift test: re-fetch upstream GitLab Container Scanning schema
 # and verify compatibility. Runs via scheduled pipeline with
 # SCHEMA_DRIFT_CHECK=true.

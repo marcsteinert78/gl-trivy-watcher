@@ -19,10 +19,10 @@ import (
 //
 // To update the schema:
 //
-//	curl -sSLo testdata/container-scanning-report-format.json \
-//	  https://gitlab.com/gitlab-org/security-products/security-report-schemas/-/raw/master/dist/container-scanning-report-format.json
+//	curl -sSLo testdata/cluster-image-scanning-report-format.json \
+//	  https://gitlab.com/gitlab-org/security-products/security-report-schemas/-/raw/master/dist/cluster-image-scanning-report-format.json
 func TestReportMatchesGitLabSchema(t *testing.T) {
-	schemaBytes, err := os.ReadFile("testdata/container-scanning-report-format.json")
+	schemaBytes, err := os.ReadFile("testdata/cluster-image-scanning-report-format.json")
 	if err != nil {
 		t.Fatalf("read schema: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestReportMatchesGitLabSchema(t *testing.T) {
 // still schema-valid — important because we upload empty reports too, to clear
 // resolved vulnerabilities from the dashboard.
 func TestEmptyReportMatchesSchema(t *testing.T) {
-	schemaBytes, err := os.ReadFile("testdata/container-scanning-report-format.json")
+	schemaBytes, err := os.ReadFile("testdata/cluster-image-scanning-report-format.json")
 	if err != nil {
 		t.Fatalf("read schema: %v", err)
 	}

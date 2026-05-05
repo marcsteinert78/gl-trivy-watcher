@@ -28,8 +28,8 @@ test:schema-drift:
     - pve-local
   script:
     - apt-get update && apt-get install -y --no-install-recommends curl
-    - curl -sSLf -o testdata/container-scanning-report-format.json
-      "https://gitlab.com/gitlab-org/security-products/security-report-schemas/-/raw/master/dist/container-scanning-report-format.json"
+    - curl -sSLf -o testdata/cluster-image-scanning-report-format.json
+      "https://gitlab.com/gitlab-org/security-products/security-report-schemas/-/raw/master/dist/cluster-image-scanning-report-format.json"
     - go test -run 'Schema' -v ./...
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule" && $SCHEMA_DRIFT_CHECK == "true"

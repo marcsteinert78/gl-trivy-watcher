@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://gitlab.com/gitlab-org/security-products/security-report-schemas/-/raw/master/dist/container-scanning-report-format.json",
-  "title": "Report format for GitLab Container Scanning",
-  "description": "This schema provides the the report format for Container Scanning (https://docs.gitlab.com/ee/user/application_security/container_scanning).",
+  "$id": "https://gitlab.com/gitlab-org/security-products/security-report-schemas/-/raw/master/dist/cluster-image-scanning-report-format.json",
+  "title": "Report format for GitLab Cluster Image Scanning",
+  "description": "This schema provides the the report format for Cluster Image Scanning (https://docs.gitlab.com/ee/user/application_security/cluster_image_scanning/).",
   "definitions": {
     "detail_type": {
       "oneOf": [
@@ -724,8 +724,7 @@
           "type": "string",
           "description": "Type of the scan.",
           "enum": [
-            "container_scanning",
-            "container_scanning_for_registry"
+            "cluster_image_scanning"
           ]
         },
         "partial_scan": {
@@ -1109,8 +1108,8 @@
             "description": "Identifies the vulnerability's location.",
             "required": [
               "dependency",
-              "operating_system",
-              "image"
+              "image",
+              "kubernetes_resource"
             ],
             "properties": {
               "dependency": {
@@ -1147,17 +1146,85 @@
               "operating_system": {
                 "type": "string",
                 "minLength": 1,
+                "maxLength": 255,
                 "description": "The operating system that contains the vulnerable package."
               },
               "image": {
                 "type": "string",
                 "minLength": 1,
-                "description": "The analyzed Docker image."
+                "description": "The analyzed Docker image.",
+                "examples": [
+                  "index.docker.io/library/nginx:1.21"
+                ]
               },
-              "default_branch_image": {
-                "type": "string",
-                "maxLength": 255,
-                "description": "The name of the image on the default branch."
+              "kubernetes_resource": {
+                "type": "object",
+                "description": "The specific Kubernetes resource that was scanned.",
+                "required": [
+                  "namespace",
+                  "kind",
+                  "name",
+                  "container_name"
+                ],
+                "properties": {
+                  "namespace": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255,
+                    "description": "The Kubernetes namespace the resource that had its image scanned.",
+                    "examples": [
+                      "default",
+                      "staging",
+                      "production"
+                    ]
+                  },
+                  "kind": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255,
+                    "description": "The Kubernetes kind the resource that had its image scanned.",
+                    "examples": [
+                      "Deployment",
+                      "DaemonSet"
+                    ]
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255,
+                    "description": "The name of the resource that had its image scanned.",
+                    "examples": [
+                      "nginx-ingress"
+                    ]
+                  },
+                  "container_name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255,
+                    "description": "The name of the container that had its image scanned.",
+                    "examples": [
+                      "nginx"
+                    ]
+                  },
+                  "agent_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255,
+                    "description": "The GitLab ID of the Kubernetes Agent which performed the scan.",
+                    "examples": [
+                      "1234"
+                    ]
+                  },
+                  "cluster_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255,
+                    "description": "The GitLab ID of the Kubernetes cluster when using cluster integration.",
+                    "examples": [
+                      "1234"
+                    ]
+                  }
+                }
               }
             }
           }

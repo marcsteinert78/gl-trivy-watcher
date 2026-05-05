@@ -147,7 +147,7 @@ func convertItemsToVulnerabilities(items []unstructured.Unstructured) []Vulnerab
 
 			vulns = append(vulns, Vulnerability{
 				ID:          fmt.Sprintf("%s-%s-%s", vulnID, sanitize(image), pkgName),
-				Category:    "container_scanning",
+				Category:    "cluster_image_scanning",
 				Name:        vulnID,
 				Message:     fmt.Sprintf("%s in %s [%s/%s/%s]", vulnID, pkgName, namespace, resourceName, containerName),
 				Description: firstN(desc, 500),
@@ -230,7 +230,7 @@ func buildSecurityReport(vulns []Vulnerability, scanner scannerInfo) SecurityRep
 				Version: scannerVersion,
 				Vendor:  Vendor{Name: vendorName},
 			},
-			Type:    "container_scanning",
+			Type:    "cluster_image_scanning",
 			Status:  "success",
 			StartTime: now,
 			EndTime:   now,

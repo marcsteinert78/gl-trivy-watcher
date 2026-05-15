@@ -42,11 +42,11 @@ func (h *Health) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	age := time.Since(last)
 	if age > h.staleAfter {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		fmt.Fprintf(w, "stale: last poll %s ago (threshold %s)\n", age.Round(time.Second), h.staleAfter)
+		_, _ = fmt.Fprintf(w, "stale: last poll %s ago (threshold %s)\n", age.Round(time.Second), h.staleAfter)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "ok: last poll %s ago\n", age.Round(time.Second))
+	_, _ = fmt.Fprintf(w, "ok: last poll %s ago\n", age.Round(time.Second))
 }
 
 // RunHealthServer starts the health HTTP server and blocks until ctx is done.

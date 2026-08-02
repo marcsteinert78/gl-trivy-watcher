@@ -23,7 +23,7 @@ include:
 # SCHEMA_DRIFT_CHECK=true.
 test:schema-drift:
   stage: test
-  image: golang:1.25
+  image: golang:1.26
   tags:
     - pve-local
   script:

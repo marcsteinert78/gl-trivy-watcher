@@ -4,8 +4,8 @@ go 1.26.0
 
 require (
 	github.com/xeipuuv/gojsonschema v1.2.0
-	k8s.io/apimachinery v0.36.3
-	k8s.io/client-go v0.36.3
+	k8s.io/apimachinery v0.36.4
+	k8s.io/client-go v0.36.4
 )
 
 require (
